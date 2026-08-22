@@ -1,0 +1,6 @@
+id = "mo2vr"
+name = "MO2VR"
+status = "pending"
+
+kind = "mo2"
+runtime = "skyrim-vr"

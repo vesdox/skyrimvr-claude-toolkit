@@ -1,0 +1,9 @@
+id = "assos"
+name = "ASSOS"
+status = "active"
+
+kind = "mo2"
+runtime = "skyrim-se"
+
+[evidence]
+root = "/home/wodox/skyrim-dev/windows-ro/assos"

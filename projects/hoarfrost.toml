@@ -1,0 +1,17 @@
+id = "hoarfrost"
+name = "Hoarfrost"
+status = "active"
+
+repo = "/home/wodox/skyrim-dev/repos/Hoarfrost"
+
+[capabilities]
+windows_native_build = true
+runtime_deployment = false
+
+[[environments]]
+id = "assos"
+role = "primary-test"
+
+[[environments]]
+id = "mo2vr"
+role = "vr-validation"
