@@ -62,9 +62,16 @@ Prefer Linux for work that does not genuinely require Windows.
 Windows operations must use narrowly scoped bridge capabilities rather than general
 remote shell access when a bridge exists.
 
-Native Windows builds must be invoked through the project's registered build
-capability. Do not substitute a Linux-native build when Windows validation is
-required.
+Native Windows builds must be invoked through the shared project-aware entry
+point:
+
+    skyrim-agent build <project-id>
+
+The repository-local build command registered in a project definition is an
+implementation detail used by the toolkit. Agents should not invoke that underlying
+command directly unless explicitly debugging the toolkit itself.
+
+Do not substitute a Linux-native build when Windows validation is required.
 
 Build workers are not runtime/deployment workers.
 

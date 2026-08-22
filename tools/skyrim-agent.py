@@ -255,8 +255,12 @@ def project_agent_block(project_id: str, project: dict) -> str:
 
     if native_build:
         lines.append(
-            f"- Run the registered native Windows build with "
+            f"- Run the authorized native Windows build through "
             f"`skyrim-agent build {project_id}`."
+        )
+        lines.append(
+            "- Do not invoke the repository-local build implementation directly "
+            "unless explicitly debugging the toolkit/bridge itself."
         )
 
     lines += [
