@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PROJECTS_DIR = ROOT / "projects"
 ENVIRONMENTS_DIR = ROOT / "environments"
+POLICIES_DIR = ROOT / "policies"
+CORE_POLICY = POLICIES_DIR / "core.toml"
 
 
 def load_toml(path: Path) -> dict:
@@ -147,6 +149,30 @@ def get_native_build(project_id: str):
 def validate() -> list[str]:
     projects, environments = registries()
     errors = []
+
+    if not CORE_POLICY.is_file():
+        errors.append(f"missing core safety policy: {CORE_POLICY}")
+    else:
+        try:
+            policy = load_toml(CORE_POLICY)
+        except tomllib.TOMLDecodeError as exc:
+            errors.append(f"invalid core safety policy: {exc}")
+        else:
+            if policy.get("version") != 1:
+                errors.append(
+                    f"unsupported core safety policy version: "
+                    f"{policy.get('version')!r}"
+                )
+
+            if policy.get("binary_mod_files", {}).get("direct_write") != "deny":
+                errors.append(
+                    "core policy must deny direct binary mod-file writes"
+                )
+
+            if policy.get("live_environment", {}).get("default_write") != "deny":
+                errors.append(
+                    "core policy must deny live-environment writes by default"
+                )
 
     for project_id, project in projects.items():
         repo = project.get("repo")

@@ -1,0 +1,47 @@
+version = 1
+
+[project_source]
+active_repo_is_authoritative = true
+environment_is_not_source = true
+cross_project_write_requires_explicit_scope = true
+
+[live_environment]
+default_write = "deny"
+deployment_requires_explicit_authorization = true
+build_permission_implies_deployment_permission = false
+read_only_evidence_must_remain_read_only = true
+
+[binary_mod_files]
+direct_write = "deny"
+extensions = [
+  ".esp",
+  ".esm",
+  ".esl",
+  ".bsa",
+  ".ba2",
+]
+required_method = "format-aware-tool"
+
+[papyrus]
+source_edit = "explicit-scope"
+compiled_edit = "tool-only"
+source_extensions = [".psc"]
+compiled_extensions = [".pex"]
+
+[windows]
+prefer_scoped_bridge = true
+general_remote_shell = "deny-when-scoped-bridge-exists"
+build_worker_may_access_live_environment = false
+
+[build]
+native_windows_validation_must_use_registered_capability = true
+linux_build_may_substitute_for_required_windows_build = false
+successful_build_implies_deployment_authorization = false
+
+[mo2]
+load_order_dependent_operations_require_virtual_filesystem = true
+physical_data_directory_is_not_merged_view = true
+
+[agent]
+agent_specific_hooks_are_supplemental = true
+missing_capability_behavior = "report"
