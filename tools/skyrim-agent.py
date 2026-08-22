@@ -201,6 +201,68 @@ def cmd_show(args):
 
 
 
+
+def cmd_evidence(args):
+    project = resolve_project(args.project)
+
+    print(f"Project: {project.get('name', args.project)}")
+
+    found_active = False
+
+    for environment in project.get("_resolved_environments", []):
+        env_id = environment.get("id", "unknown")
+        name = environment.get("name", env_id)
+        status = environment.get("status", "unknown")
+        role = environment.get("_role") or "unspecified"
+        runtime = environment.get("runtime", "unknown")
+
+        print()
+        print(f"Environment: {name} ({env_id})")
+        print(f"  Role:      {role}")
+        print(f"  Runtime:   {runtime}")
+        print(f"  Status:    {status}")
+
+        if status != "active":
+            print("  Evidence:  not required while environment is pending")
+            continue
+
+        found_active = True
+        evidence = environment.get("evidence", {})
+
+        if not evidence:
+            raise ValueError(
+                f"active environment '{env_id}' has no evidence paths configured"
+            )
+
+        for label, value in evidence.items():
+            evidence_path = Path(value)
+
+            exists = evidence_path.exists()
+            writable = evidence_path.exists() and os.access(evidence_path, os.W_OK)
+
+            print(f"  {label}:")
+            print(f"    path:      {evidence_path}")
+            print(f"    exists:    {'yes' if exists else 'NO'}")
+            print(f"    writable:  {'YES' if writable else 'no'}")
+
+            if not exists:
+                raise ValueError(
+                    f"environment '{env_id}' evidence path does not exist: "
+                    f"{evidence_path}"
+                )
+
+            if writable:
+                raise ValueError(
+                    f"environment '{env_id}' evidence path is writable but "
+                    f"must be read-only: {evidence_path}"
+                )
+
+    if not found_active:
+        print()
+        print("No active environments are configured for this project.")
+
+
+
 def cmd_build(args):
     project, repo, script = get_native_build(args.project)
 
@@ -246,6 +308,10 @@ def main():
     show_parser = subparsers.add_parser("show")
     show_parser.add_argument("project")
     show_parser.set_defaults(func=cmd_show)
+
+    evidence_parser = subparsers.add_parser("evidence")
+    evidence_parser.add_argument("project")
+    evidence_parser.set_defaults(func=cmd_evidence)
 
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("project")

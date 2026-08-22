@@ -6,4 +6,5 @@ kind = "mo2"
 runtime = "skyrim-se"
 
 [evidence]
-root = "/home/wodox/skyrim-dev/windows-ro/assos"
+mods = "/home/wodox/skyrim-dev/windows-ro/assos"
+documents = "/home/wodox/skyrim-dev/windows-ro/skyrim-docs"
