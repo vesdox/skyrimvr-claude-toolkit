@@ -177,6 +177,13 @@ def project_report(
             f"    risk: {risk}"
         )
 
+        actions = capability.get("actions", {})
+
+        if isinstance(actions, dict) and actions:
+            lines.append(
+                "    actions: " + ", ".join(sorted(actions))
+            )
+
         requirements = capability_requirements(capability)
 
         if requirements:
@@ -185,3 +192,80 @@ def project_report(
             )
 
     return "\n".join(lines)
+
+
+def require_project_capability(
+    project_id: str,
+    project: dict,
+    capability_id: str,
+    catalog: dict[str, dict],
+) -> dict:
+    if capability_id not in catalog:
+        raise ValueError(
+            f"unknown capability: {capability_id}"
+        )
+
+    capability = catalog[capability_id]
+
+    allowed = set(
+        allowed_capabilities(project)
+    )
+
+    if capability_id not in allowed:
+        raise ValueError(
+            f"capability '{capability_id}' is not granted "
+            f"to project '{project_id}'"
+        )
+
+    status = capability.get("status")
+
+    if status != "available":
+        raise ValueError(
+            f"capability '{capability_id}' is granted to "
+            f"project '{project_id}' but is {status!r}, not available"
+        )
+
+    if capability.get("requires_environment_write"):
+        project_caps = project.get("capabilities", {})
+
+        if not project_caps.get("runtime_deployment", False):
+            raise ValueError(
+                f"capability '{capability_id}' requires environment-write "
+                f"authorization, but project '{project_id}' does not have "
+                "runtime deployment authorization"
+            )
+
+    return capability
+
+
+def require_capability_action(
+    capability_id: str,
+    capability: dict,
+    action: str,
+) -> dict:
+    actions = capability.get("actions", {})
+
+    if not isinstance(actions, dict):
+        raise ValueError(
+            f"capability '{capability_id}' has invalid actions metadata"
+        )
+
+    config = actions.get(action)
+
+    if not isinstance(config, dict):
+        available = ", ".join(sorted(actions)) or "none"
+
+        raise ValueError(
+            f"capability '{capability_id}' has no action '{action}'. "
+            f"Available actions: {available}"
+        )
+
+    handler = config.get("handler")
+
+    if not isinstance(handler, str) or not handler:
+        raise ValueError(
+            f"capability '{capability_id}' action '{action}' "
+            "has no valid handler"
+        )
+
+    return config

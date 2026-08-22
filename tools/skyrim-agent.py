@@ -10,6 +10,8 @@ import tomllib
 from capability_registry import (
     load_catalog,
     project_report,
+    require_capability_action,
+    require_project_capability,
     validate_project_grants,
 )
 
@@ -306,6 +308,60 @@ def project_agent_block(project_id: str, project: dict) -> str:
     return "\n".join(lines)
 
 
+def cmd_run(args):
+    project = resolve_project(args.project)
+    catalog = load_catalog(CAPABILITIES_DIR)
+
+    try:
+        capability = require_project_capability(
+            args.project,
+            project,
+            args.capability,
+            catalog,
+        )
+
+        action = require_capability_action(
+            args.capability,
+            capability,
+            args.action,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}")
+
+    handler = action["handler"]
+
+    known_handlers = {
+        "inspect-plugin",
+    }
+
+    if handler not in known_handlers:
+        raise SystemExit(
+            f"error: capability handler is not registered with "
+            f"skyrim-agent: {handler}"
+        )
+
+    forwarded = list(args.arguments)
+
+    if forwarded and forwarded[0] == "--":
+        forwarded = forwarded[1:]
+
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        handler,
+        args.project,
+        *forwarded,
+    ]
+
+    process = subprocess.run(
+        command,
+        cwd=ROOT,
+    )
+
+    if process.returncode != 0:
+        raise SystemExit(process.returncode)
+
+
 def cmd_plugins(args):
     project = resolve_project(args.project)
 
@@ -585,6 +641,31 @@ def main():
     show_parser = subparsers.add_parser("show")
     show_parser.add_argument("project")
     show_parser.set_defaults(func=cmd_show)
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="run an authorized project capability action",
+    )
+    run_parser.add_argument(
+        "project",
+        help="registered project id",
+    )
+    run_parser.add_argument(
+        "capability",
+        help="capability id",
+    )
+    run_parser.add_argument(
+        "action",
+        help="capability action",
+    )
+    run_parser.add_argument(
+        "arguments",
+        nargs=argparse.REMAINDER,
+        help="arguments passed to the registered capability handler",
+    )
+    run_parser.set_defaults(
+        func=cmd_run
+    )
 
     plugins_parser = subparsers.add_parser(
         "plugins",

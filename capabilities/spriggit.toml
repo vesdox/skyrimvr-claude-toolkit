@@ -27,3 +27,7 @@ package = "spriggit.cli"
 package_version = "0.40.0"
 game_release = "SkyrimSE"
 format_package = "Spriggit.Yaml"
+
+[actions.inspect]
+handler = "inspect-plugin"
+description = "Resolve and inspect a plugin from a registered project environment."

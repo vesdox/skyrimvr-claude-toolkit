@@ -56,9 +56,17 @@ Examples:
 Use the project ID supplied by the user or task. Do not substitute another project
 because it appears similar or shares an environment.
 
-When locating plugins in a registered MO2 environment, prefer the project-aware
-`inspect-plugin` resolver over hardcoded filesystem paths. If a mod contains multiple
-plugins, identify the intended plugin explicitly rather than guessing.
+For reusable toolkit capabilities, prefer the project-aware capability interface:
+
+    skyrim-agent run <project-id> <capability-id> <action> ...
+
+Treat capability implementation scripts as toolkit internals unless explicitly
+debugging the toolkit itself.
+
+When locating plugins manually or debugging capability resolution, use the
+project-aware `plugins` and `inspect-plugin` commands instead of hardcoded filesystem
+paths. If a mod contains multiple plugins, identify the intended plugin explicitly
+rather than guessing.
 
 ## Windows boundaries
 
