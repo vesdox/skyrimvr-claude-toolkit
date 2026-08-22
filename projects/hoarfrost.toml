@@ -15,3 +15,6 @@ role = "primary-test"
 [[environments]]
 id = "mo2vr"
 role = "vr-validation"
+
+[build.windows_native]
+command = "./tools/windows-build.sh"

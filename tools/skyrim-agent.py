@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -76,6 +78,72 @@ def resolve_project(project_id: str) -> dict:
     return project
 
 
+
+def get_native_build(project_id: str):
+    project = resolve_project(project_id)
+
+    if project.get("status") != "active":
+        raise ValueError(
+            f"project '{project_id}' is not active"
+        )
+
+    capabilities = project.get("capabilities", {})
+    if not capabilities.get("windows_native_build", False):
+        raise ValueError(
+            f"project '{project_id}' does not permit Windows native builds"
+        )
+
+    repo_value = project.get("repo")
+    if not repo_value:
+        raise ValueError(
+            f"project '{project_id}' has no repository path"
+        )
+
+    repo = Path(repo_value).resolve()
+
+    if not repo.is_dir():
+        raise ValueError(
+            f"project '{project_id}' repository does not exist: {repo}"
+        )
+
+    build_config = project.get("build", {}).get("windows_native", {})
+    command = build_config.get("command")
+
+    if not command:
+        raise ValueError(
+            f"project '{project_id}' has no Windows native build command"
+        )
+
+    command_path = Path(command)
+
+    if command_path.is_absolute():
+        raise ValueError(
+            f"project '{project_id}' build command must be repository-relative"
+        )
+
+    script = (repo / command_path).resolve()
+
+    try:
+        script.relative_to(repo)
+    except ValueError:
+        raise ValueError(
+            f"project '{project_id}' build command escapes its repository: {script}"
+        )
+
+    if not script.is_file():
+        raise ValueError(
+            f"project '{project_id}' build command does not exist: {script}"
+        )
+
+    if not os.access(script, os.X_OK):
+        raise ValueError(
+            f"project '{project_id}' build command is not executable: {script}"
+        )
+
+    return project, repo, script
+
+
+
 def validate() -> list[str]:
     projects, environments = registries()
     errors = []
@@ -132,6 +200,27 @@ def cmd_show(args):
     print(json.dumps(project, indent=2))
 
 
+
+def cmd_build(args):
+    project, repo, script = get_native_build(args.project)
+
+    print(f"Project:      {project.get('name', args.project)}")
+    print(f"Repository:   {repo}")
+    print(f"Native build: {script}")
+
+    if args.dry_run:
+        print("Dry run only; build was not started.")
+        return
+
+    result = subprocess.run(
+        [str(script)],
+        cwd=repo,
+    )
+
+    raise SystemExit(result.returncode)
+
+
+
 def cmd_validate(_args):
     errors = validate()
 
@@ -157,6 +246,15 @@ def main():
     show_parser = subparsers.add_parser("show")
     show_parser.add_argument("project")
     show_parser.set_defaults(func=cmd_show)
+
+    build_parser = subparsers.add_parser("build")
+    build_parser.add_argument("project")
+    build_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve and validate the build without running it",
+    )
+    build_parser.set_defaults(func=cmd_build)
 
     validate_parser = subparsers.add_parser("validate")
     validate_parser.set_defaults(func=cmd_validate)
