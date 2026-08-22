@@ -41,7 +41,16 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -W 2>/dev/null)"
 [ -z "$HERE" ] && HERE="$(cd "$(dirname "$0")" && pwd)"
 TOOL="$HERE/resaver-cli"
-CP="$TOOL/ReSaver.jar;$TOOL/lib/*"
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|MSYS*|CYGWIN*)
+    CP_SEP=";"
+    ;;
+  *)
+    CP_SEP=":"
+    ;;
+esac
+
+CP="$TOOL/ReSaver.jar${CP_SEP}$TOOL/lib/*"
 OVERLAY="$TOOL/analysis-overlay"   # read-only analysis overlay (modified ReSaver source; see analysis-overlay/NOTICE.md)
 
 if [ ! -f "$TOOL/ReSaver.jar" ]; then
@@ -90,10 +99,10 @@ case "$OP" in
     else
       OVERLAY_OK=0   # overlay not installed (older layout) — stock is fine
     fi
-    if [ "$OVERLAY_OK" = "1" ]; then RUNCP="$OVERLAY;$TOOL;$CP"; else RUNCP="$TOOL;$CP"; fi
+    if [ "$OVERLAY_OK" = "1" ]; then RUNCP="$OVERLAY${CP_SEP}$TOOL${CP_SEP}$CP"; else RUNCP="$TOOL${CP_SEP}$CP"; fi
     ;;
   *)
-    RUNCP="$TOOL;$CP"           # stock only — overlay structurally excluded from write ops
+    RUNCP="$TOOL${CP_SEP}$CP"           # stock only — overlay structurally excluded from write ops
     ;;
 esac
 

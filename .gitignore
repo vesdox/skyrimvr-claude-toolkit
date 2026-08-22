@@ -19,3 +19,9 @@ tools/.nexus_api_key
 
 __pycache__/
 *.py[cod]
+
+# Local FallrimTools/ReSaver runtime payload
+tools/resaver-cli/ReSaver.jar
+tools/resaver-cli/lib/
+tools/resaver-cli/*.class
+tools/resaver-cli/analysis-overlay/**/*.class
