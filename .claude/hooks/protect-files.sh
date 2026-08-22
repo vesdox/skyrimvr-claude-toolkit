@@ -1,33 +1,66 @@
 #!/bin/bash
-# Protect ALL files from unnoticed edits. Every edit requires explicit confirmation
-# unless it's in our own workspace (.claude/hooks, .claude/plans, .claude/backups).
-#
-# SETUP: Update the JQ variable below to point to your jq installation.
-
-JQ="{{JQ_PATH}}"
+set -euo pipefail
 
 INPUT=$(cat /dev/stdin)
-FILE_PATH=$(echo "$INPUT" | "$JQ" -r '.tool_input.file_path // empty')
+
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+JQ="${JQ:-jq}"
+
+FILE_PATH=$(
+    printf '%s' "$INPUT" |
+    "$JQ" -r '.tool_input.file_path // empty'
+)
 
 [ -z "$FILE_PATH" ] && exit 0
 
-deny() { "$JQ" -n --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
-ask()  { "$JQ" -n --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$r}}'; exit 0; }
+EVALUATOR="$PROJECT_DIR/policies/evaluate-file.py"
 
-# === HARD BLOCK -- binary plugin/archive files ===
-echo "$FILE_PATH" | grep -qiE '\.(esp|esm|esl|bsa|ba2)$' && deny "BLOCKED: Cannot directly write to plugin/archive files. Use xelib or modding tools."
+if [ ! -x "$EVALUATOR" ]; then
+    "$JQ" -n \
+        --arg r "Shared file-policy evaluator is unavailable: $EVALUATOR" \
+        '{
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: $r
+          }
+        }'
+    exit 0
+fi
 
-# === WHITELIST -- our own workspace (no confirmation needed) ===
-echo "$FILE_PATH" | grep -qiE '\.claude/(hooks|plans|backups|memory)/' && exit 0
-echo "$FILE_PATH" | grep -qiE '\.claude/projects/' && exit 0
+RESULT=$("$EVALUATOR" "$FILE_PATH")
+DECISION=$(printf '%s' "$RESULT" | "$JQ" -r '.decision')
+REASON=$(printf '%s' "$RESULT" | "$JQ" -r '.reason')
 
-# === HIGH-PRIORITY CONFIRM (specific message) ===
-echo "$FILE_PATH" | grep -qiE '(Skyrim\.ini|SkyrimVR\.ini|SkyrimPrefs\.ini|SkyrimCustom\.ini)$' && ask "EDITING SKYRIM CONFIG: $FILE_PATH"
-echo "$FILE_PATH" | grep -qiE 'Data/SKSE/Plugins/.*\.ini$' && ask "EDITING SKSE PLUGIN CONFIG: $FILE_PATH"
-echo "$FILE_PATH" | grep -qiE '(loadorder\.txt|plugins\.txt)$' && ask "EDITING LOAD ORDER FILE: $FILE_PATH"
-echo "$FILE_PATH" | grep -qiE '\.(pex|psc)$' && ask "EDITING PAPYRUS SCRIPT: $FILE_PATH"
+case "$DECISION" in
+    allow)
+        exit 0
+        ;;
 
-# === CATCH-ALL -- any file in game directory or config directory ===
-echo "$FILE_PATH" | grep -qiE '(Skyrim VR|Skyrim Special Edition|My Games/Skyrim)' && ask "Editing file in game/config directory: $FILE_PATH"
+    ask|deny)
+        "$JQ" -n \
+            --arg d "$DECISION" \
+            --arg r "$REASON" \
+            '{
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: $d,
+                permissionDecisionReason: $r
+              }
+            }'
+        exit 0
+        ;;
 
-exit 0
+    *)
+        "$JQ" -n \
+            --arg r "Invalid decision returned by shared file-policy evaluator." \
+            '{
+              hookSpecificOutput: {
+                hookEventName: "PreToolUse",
+                permissionDecision: "deny",
+                permissionDecisionReason: $r
+              }
+            }'
+        exit 0
+        ;;
+esac
