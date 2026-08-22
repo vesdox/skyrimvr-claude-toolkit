@@ -14,6 +14,9 @@ ENVIRONMENTS_DIR = ROOT / "environments"
 POLICIES_DIR = ROOT / "policies"
 CORE_POLICY = POLICIES_DIR / "core.toml"
 
+AGENT_BLOCK_START = "<!-- skyrim-agent-toolkit:start -->"
+AGENT_BLOCK_END = "<!-- skyrim-agent-toolkit:end -->"
+
 
 def load_toml(path: Path) -> dict:
     with path.open("rb") as f:
@@ -227,6 +230,127 @@ def cmd_show(args):
 
 
 
+def project_agent_block(project_id: str, project: dict) -> str:
+    toolkit_contract = ROOT / "AGENTS.md"
+
+    capabilities = project.get("capabilities", {})
+    native_build = capabilities.get("windows_native_build", False)
+
+    lines = [
+        AGENT_BLOCK_START,
+        "## Shared Skyrim Agent Toolkit",
+        "",
+        f"This repository is registered with the shared Skyrim Agent Toolkit as "
+        f"`{project_id}`.",
+        "",
+        f"Shared toolkit contract: `{toolkit_contract}`",
+        "",
+        "For Skyrim-specific tooling, environment inspection, Windows operations, "
+        "or shared infrastructure:",
+        "",
+        f"- Resolve this project with `skyrim-agent show {project_id}`.",
+        f"- Inspect registered runtime evidence with "
+        f"`skyrim-agent evidence {project_id}`.",
+    ]
+
+    if native_build:
+        lines.append(
+            f"- Run the registered native Windows build with "
+            f"`skyrim-agent build {project_id}`."
+        )
+
+    lines += [
+        "",
+        "Project-specific design, architecture, source, and acceptance rules in this "
+        "`AGENTS.md` remain authoritative for this repository.",
+        "",
+        "The shared toolkit contract additionally governs toolkit capabilities, "
+        "environment ownership, bridge boundaries, and shared safety policy. If a "
+        "project instruction and a toolkit safety restriction differ, follow the "
+        "stricter restriction and report the conflict.",
+        "",
+        "Do not hardcode another project's repository, Windows environment, build "
+        "identity, or deployment path when a registered project/environment "
+        "capability exists.",
+        AGENT_BLOCK_END,
+    ]
+
+    return "\n".join(lines)
+
+
+def cmd_attach(args):
+    project = resolve_project(args.project)
+
+    if project.get("status") != "active":
+        raise ValueError(
+            f"project '{args.project}' is not active"
+        )
+
+    repo_value = project.get("repo")
+    if not repo_value:
+        raise ValueError(
+            f"project '{args.project}' has no repository path"
+        )
+
+    repo = Path(repo_value).resolve()
+
+    if not repo.is_dir():
+        raise ValueError(
+            f"project '{args.project}' repository does not exist: {repo}"
+        )
+
+    agents_file = repo / "AGENTS.md"
+    block = project_agent_block(args.project, project)
+
+    if agents_file.exists():
+        original = agents_file.read_text()
+    else:
+        original = "# AGENTS.md\n"
+
+    has_start = AGENT_BLOCK_START in original
+    has_end = AGENT_BLOCK_END in original
+
+    if has_start != has_end:
+        raise ValueError(
+            f"{agents_file}: incomplete managed toolkit block"
+        )
+
+    if has_start:
+        before, remainder = original.split(AGENT_BLOCK_START, 1)
+        _old_block, after = remainder.split(AGENT_BLOCK_END, 1)
+
+        updated = (
+            before.rstrip()
+            + "\n\n"
+            + block
+            + after
+        )
+    else:
+        updated = (
+            original.rstrip()
+            + "\n\n"
+            + block
+            + "\n"
+        )
+
+    if not args.apply:
+        print(f"Would update: {agents_file}")
+        print()
+        print(block)
+        print()
+        print("Dry run only; use --apply to write the managed block.")
+        return
+
+    if updated == original:
+        print(f"Already current: {agents_file}")
+        return
+
+    agents_file.write_text(updated)
+
+    print(f"Updated: {agents_file}")
+    print(f"Project: {args.project}")
+
+
 
 def cmd_evidence(args):
     project = resolve_project(args.project)
@@ -334,6 +458,18 @@ def main():
     show_parser = subparsers.add_parser("show")
     show_parser.add_argument("project")
     show_parser.set_defaults(func=cmd_show)
+
+    attach_parser = subparsers.add_parser(
+        "attach",
+        help="attach the shared toolkit contract to a registered project",
+    )
+    attach_parser.add_argument("project")
+    attach_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="write/update the managed AGENTS.md block",
+    )
+    attach_parser.set_defaults(func=cmd_attach)
 
     evidence_parser = subparsers.add_parser("evidence")
     evidence_parser.add_argument("project")
