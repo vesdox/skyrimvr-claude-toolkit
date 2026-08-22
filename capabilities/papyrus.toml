@@ -1,0 +1,20 @@
+id = "papyrus"
+name = "Papyrus Toolchain"
+
+status = "unconfigured"
+execution = "windows"
+risk = "source-write"
+
+requires_mo2_vfs = false
+requires_running_game = false
+requires_environment_write = false
+
+description = """
+Compile Papyrus source to PEX and decompile PEX to source through registered,
+format-aware tools.
+"""
+
+notes = """
+The current upstream workflow uses Caprica for compilation and Champollion for
+decompilation. Runtime-specific compiler inputs must be validated before activation.
+"""

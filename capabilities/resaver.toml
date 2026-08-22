@@ -1,0 +1,18 @@
+id = "resaver"
+name = "ReSaver"
+
+status = "unconfigured"
+execution = "linux"
+risk = "read"
+
+requires_mo2_vfs = false
+requires_running_game = false
+requires_environment_write = false
+
+description = """
+Parse and inspect Skyrim save files for diagnostic and development purposes.
+"""
+
+notes = """
+Inspection does not imply permission to mutate or replace a user's live save.
+"""

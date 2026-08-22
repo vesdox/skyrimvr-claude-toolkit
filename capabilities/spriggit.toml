@@ -1,0 +1,20 @@
+id = "spriggit"
+name = "Spriggit"
+
+status = "unconfigured"
+execution = "linux"
+risk = "source-write"
+
+requires_mo2_vfs = false
+requires_running_game = false
+requires_environment_write = false
+
+description = """
+Serialize Skyrim plugins into structured text for inspection/diffing and deserialize
+validated structured source back into plugin artifacts.
+"""
+
+notes = """
+Localized plugins may require Windows-side serialization because Spriggit's Linux
+path can fail when localized string/BSA resolution is required.
+"""

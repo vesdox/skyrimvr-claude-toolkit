@@ -1,0 +1,20 @@
+id = "devbench"
+name = "DevBench"
+
+status = "unconfigured"
+execution = "windows-runtime"
+risk = "runtime"
+
+requires_mo2_vfs = true
+requires_running_game = true
+requires_environment_write = true
+
+description = """
+Perform controlled live-game development and validation operations against an
+authorized Skyrim runtime.
+"""
+
+notes = """
+This capability belongs outside the build-worker trust boundary and requires a
+separate runtime/deployment authorization path.
+"""

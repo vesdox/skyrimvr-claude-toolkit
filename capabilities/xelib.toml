@@ -1,0 +1,20 @@
+id = "xelib"
+name = "xelib"
+
+status = "unconfigured"
+execution = "windows-mo2"
+risk = "source-write"
+
+requires_mo2_vfs = true
+requires_running_game = false
+requires_environment_write = false
+
+description = """
+Inspect and modify Skyrim plugin records with load-order-aware override resolution.
+"""
+
+notes = """
+The XEditLib DLL is Windows-only. Under MO2, full load-order operations must execute
+inside the MO2 virtual filesystem or results can be incomplete while appearing
+plausible.
+"""

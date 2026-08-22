@@ -1,0 +1,19 @@
+id = "housecarl"
+name = "houseCARL"
+
+status = "unconfigured"
+execution = "windows-runtime"
+risk = "runtime"
+
+requires_mo2_vfs = true
+requires_running_game = true
+requires_environment_write = true
+
+description = """
+Controlled access to houseCARL-assisted Skyrim development/runtime functionality.
+"""
+
+notes = """
+Do not route this through the hardened Windows native-build identity. A dedicated
+runtime capability and Windows trust boundary must be designed before activation.
+"""
