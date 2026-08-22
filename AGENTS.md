@@ -51,9 +51,14 @@ Examples:
     ./tools/skyrim-agent.py show hoarfrost
     ./tools/skyrim-agent.py evidence hoarfrost
     ./tools/skyrim-agent.py build hoarfrost --dry-run
+    skyrim-agent inspect-plugin <project-id> --environment <environment-id> --mod "<mod-name>"
 
 Use the project ID supplied by the user or task. Do not substitute another project
 because it appears similar or shares an environment.
+
+When locating plugins in a registered MO2 environment, prefer the project-aware
+`inspect-plugin` resolver over hardcoded filesystem paths. If a mod contains multiple
+plugins, identify the intended plugin explicitly rather than guessing.
 
 ## Windows boundaries
 

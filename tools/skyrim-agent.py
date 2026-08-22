@@ -12,6 +12,8 @@ from capability_registry import (
     project_report,
     validate_project_grants,
 )
+
+from plugin_locator import resolve_plugin
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -301,6 +303,50 @@ def project_agent_block(project_id: str, project: dict) -> str:
     return "\n".join(lines)
 
 
+def cmd_inspect_plugin(args):
+    project = resolve_project(args.project)
+
+    try:
+        resolved = resolve_plugin(
+            project,
+            args.environment,
+            args.mod,
+            args.plugin,
+            ENVIRONMENTS_DIR,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}")
+
+    plugin = resolved["plugin"]
+
+    if args.resolve_only:
+        print(f"Project: {resolved['project']}")
+        print(f"Environment: {resolved['environment']}")
+        print(f"Runtime: {resolved['runtime']}")
+        print(f"Mod: {resolved['mod']}")
+        print(f"Plugin: {plugin}")
+        return
+
+    inspector = ROOT / "tools" / "skyrim-inspect-plugin.py"
+
+    if not inspector.is_file():
+        raise SystemExit(
+            f"error: plugin inspector is unavailable: {inspector}"
+        )
+
+    process = subprocess.run(
+        [
+            str(inspector),
+            args.project,
+            str(plugin),
+        ],
+        cwd=ROOT,
+    )
+
+    if process.returncode != 0:
+        raise SystemExit(process.returncode)
+
+
 def cmd_capabilities(args):
     project = resolve_project(args.project)
     catalog = load_catalog(CAPABILITIES_DIR)
@@ -494,6 +540,37 @@ def main():
     show_parser = subparsers.add_parser("show")
     show_parser.add_argument("project")
     show_parser.set_defaults(func=cmd_show)
+
+    inspect_plugin_parser = subparsers.add_parser(
+        "inspect-plugin",
+        help="inspect a plugin by registered environment and MO2 mod name",
+    )
+    inspect_plugin_parser.add_argument("project")
+    inspect_plugin_parser.add_argument(
+        "--environment",
+        required=True,
+        help="registered project environment id",
+    )
+    inspect_plugin_parser.add_argument(
+        "--mod",
+        required=True,
+        help="MO2 mod directory name",
+    )
+    inspect_plugin_parser.add_argument(
+        "--plugin",
+        help=(
+            "plugin filename or path relative to the mod; "
+            "optional when the mod contains exactly one plugin"
+        ),
+    )
+    inspect_plugin_parser.add_argument(
+        "--resolve-only",
+        action="store_true",
+        help="resolve the plugin without running Spriggit",
+    )
+    inspect_plugin_parser.set_defaults(
+        func=cmd_inspect_plugin
+    )
 
     capabilities_parser = subparsers.add_parser(
         "capabilities",
