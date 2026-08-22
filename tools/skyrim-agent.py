@@ -6,6 +6,12 @@ import os
 import subprocess
 import sys
 import tomllib
+
+from capability_registry import (
+    load_catalog,
+    project_report,
+    validate_project_grants,
+)
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,6 +19,7 @@ PROJECTS_DIR = ROOT / "projects"
 ENVIRONMENTS_DIR = ROOT / "environments"
 POLICIES_DIR = ROOT / "policies"
 CORE_POLICY = POLICIES_DIR / "core.toml"
+CAPABILITIES_DIR = ROOT / "capabilities"
 
 AGENT_BLOCK_START = "<!-- skyrim-agent-toolkit:start -->"
 AGENT_BLOCK_END = "<!-- skyrim-agent-toolkit:end -->"
@@ -200,6 +207,18 @@ def validate() -> list[str]:
                     f"{project_id}: unknown environment '{env_id}'"
                 )
 
+    try:
+        catalog = load_catalog(CAPABILITIES_DIR)
+    except (ValueError, tomllib.TOMLDecodeError, OSError) as exc:
+        errors.append(f"capability catalog error: {exc}")
+    else:
+        errors.extend(
+            validate_project_grants(
+                projects,
+                catalog,
+            )
+        )
+
     return errors
 
 
@@ -280,6 +299,19 @@ def project_agent_block(project_id: str, project: dict) -> str:
     ]
 
     return "\n".join(lines)
+
+
+def cmd_capabilities(args):
+    project = resolve_project(args.project)
+    catalog = load_catalog(CAPABILITIES_DIR)
+
+    print(
+        project_report(
+            args.project,
+            project,
+            catalog,
+        )
+    )
 
 
 def cmd_attach(args):
@@ -462,6 +494,13 @@ def main():
     show_parser = subparsers.add_parser("show")
     show_parser.add_argument("project")
     show_parser.set_defaults(func=cmd_show)
+
+    capabilities_parser = subparsers.add_parser(
+        "capabilities",
+        help="show capability authorization and routing for a project",
+    )
+    capabilities_parser.add_argument("project")
+    capabilities_parser.set_defaults(func=cmd_capabilities)
 
     attach_parser = subparsers.add_parser(
         "attach",

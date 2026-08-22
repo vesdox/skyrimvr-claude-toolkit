@@ -21,3 +21,6 @@ command = "./tools/windows-build.sh"
 
 [snapshots]
 before_command = []
+
+[capability_grants]
+allow = []
