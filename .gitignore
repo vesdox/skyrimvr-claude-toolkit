@@ -16,3 +16,6 @@ Desktop.ini
 tools/.nexus_api_key
 .nexus_api_key
 *.nexus_api_key
+
+__pycache__/
+*.py[cod]
