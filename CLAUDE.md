@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+> **Shared contract:** Read `AGENTS.md` first. It is the canonical agent-neutral
+> architecture and safety contract for this fork. This file remains the detailed
+> Claude/tooling reference during migration. Where the two conflict on project
+> resolution, environment ownership, bridge usage, or shared safety boundaries,
+> `AGENTS.md` takes precedence.
+
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is

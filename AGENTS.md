@@ -1,53 +1,130 @@
-# AGENTS.md
+# Skyrim Agent Toolkit — Shared Agent Contract
 
-Instructions for AI coding agents working in this Skyrim modding environment.
+This file is the canonical agent-neutral instruction entry point for this toolkit.
 
-**Read `CLAUDE.md` first — it is the full project instruction set**, and it is agent-neutral apart
-from the parts noted below. It contains the configured paths for this install, the tool inventory and
-how to invoke each one, the ESP-editing workflows, and the core working principles. `KNOWLEDGEBASE.md`
-is the reference for engine quirks and version differences; consult it before making changes rather
-than after something breaks.
+It applies to Pi, Claude Code, and other coding agents unless an adapter explicitly
+adds stricter behavior. Agent-specific adapters may extend this contract but must
+not silently weaken it.
 
-This file exists so agents that look for `AGENTS.md` by convention find their way in. It deliberately
-does not duplicate `CLAUDE.md`, so the two cannot drift apart.
+## Architecture
 
-## What is portable, and what is not
+The toolkit is multi-project and multi-environment.
 
-**Portable to any agent** — this is most of the toolkit by volume:
+- `projects/` defines source projects and their capabilities.
+- `environments/` defines Skyrim/MO2 test environments and read-only evidence.
+- `policies/` contains shared safety policy.
+- `bridges/` contains narrowly scoped Linux ↔ Windows capabilities.
+- `adapters/` contains agent-specific integration.
+- `tools/skyrim-agent.py` is the shared project/environment resolver.
 
-- `KNOWLEDGEBASE.md` — engine behaviour, VR/SE/AE differences, tool gotchas. Plain reference.
-- `CLAUDE.md` — paths, tool usage, workflows, principles.
-- Everything under `tools/`, `examples/`, and `scripts/` — plain bash, Node, and Python. No agent
-  runtime is involved; they work from any shell.
+Do not assume:
+- there is only one source repository;
+- one repository produces only one plugin;
+- one plugin has only one repository;
+- one project uses only one Skyrim environment;
+- one Skyrim environment belongs to only one project.
 
-**Claude Code specific — you do not get these:**
+Resolve project-specific information through the project registry rather than
+hardcoding Hoarfrost, ASSOS, MO2VR, or any future project/environment name.
 
-- `.claude/settings.json` and `.claude/hooks/` — the safety layer. These hooks are what block direct
-  writes to ESP/ESM/BSA files, require confirmation before editing anything in the game or config
-  directories, and auto-back-up every file before it is modified, with an audit trail.
-- `.claude/skills/` — packaged workflows.
+## Source and environment boundaries
 
-**Read that second list carefully.** On another agent the guardrails are simply absent. Nothing will
-stop a bad `rm`, a direct binary write into a plugin, or an unreviewed edit to a live INI. The
-knowledge and the tools carry over; the seatbelts do not.
+A project source repository is authoritative for development once that project is
+marked active and migrated into this workspace.
 
-If you are not running under Claude Code, compensate deliberately:
+A Skyrim/MO2 environment is a test/deployment environment, not a source workspace.
 
-1. **Back up before you touch anything.** Copy the file first — the toolkit's own convention is
-   `.claude/backups/<descriptive-name>/`. Assume nothing is doing this for you.
-2. **Never write directly to `.esp` / `.esm` / `.esl` / `.bsa` / `.ba2`.** Use Spriggit (serialize to
-   YAML, edit the YAML, deserialize) or xelib. A hand-edited plugin binary is a corrupted plugin.
-3. **Show the user the change before applying it**, especially for INIs, load order files, and
-   anything under the game directory. The hooks normally force this pause; without them it is on you.
-4. **Snapshot `.psc` sources before experimenting.** They are not covered by any automatic backup even
-   under Claude Code, and reconstructing a working script from memory is miserable.
+Linux-visible environment evidence must be treated as read-only. Never use an
+environment evidence path as an authoritative project source tree.
 
-## Ground rules that apply regardless of agent
+Do not deploy to, alter, or manage a live Skyrim/MO2 environment unless an explicit
+runtime/deployment capability has been authorized for that operation.
 
-- **State a confidence level before proposing a change**, and investigate until it is high. Skyrim is
-  full of undocumented quirks and version differences; things frequently do not work the way they
-  read.
-- **Never assume Skyrim SE behaviour equals Skyrim VR behaviour.** Verify per feature.
-- **Use the engine's own mechanisms before writing a Papyrus workaround**, and model any new mechanic
-  on how vanilla Skyrim does the closest equivalent.
-- **Consult `KNOWLEDGEBASE.md` before acting**, and add what you learn back into it afterwards.
+Build permission does not imply deployment permission.
+
+## Project-aware commands
+
+Before acting on a project, resolve it through the shared registry.
+
+Examples:
+
+    ./tools/skyrim-agent.py show hoarfrost
+    ./tools/skyrim-agent.py evidence hoarfrost
+    ./tools/skyrim-agent.py build hoarfrost --dry-run
+
+Use the project ID supplied by the user or task. Do not substitute another project
+because it appears similar or shares an environment.
+
+## Windows boundaries
+
+Prefer Linux for work that does not genuinely require Windows.
+
+Windows operations must use narrowly scoped bridge capabilities rather than general
+remote shell access when a bridge exists.
+
+Native Windows builds must be invoked through the project's registered build
+capability. Do not substitute a Linux-native build when Windows validation is
+required.
+
+Build workers are not runtime/deployment workers.
+
+Live Skyrim installations, MO2 instances, saves, runtime configuration, and deployed
+mods are outside the build-worker trust boundary.
+
+## Skyrim tooling principles
+
+Consult `KNOWLEDGEBASE.md` before relying on assumptions about Skyrim engine behavior,
+runtime differences, file formats, or modding tools.
+
+Never assume Skyrim SE/AE behavior is identical to Skyrim VR behavior. Validate the
+runtime relevant to the project.
+
+Prefer structured tooling over direct binary edits.
+
+Never directly hand-edit `.esp`, `.esm`, `.esl`, `.bsa`, or `.ba2` binary files.
+Use the appropriate toolkit workflow such as Spriggit, xelib, or another validated
+format-aware tool.
+
+Treat load-order-dependent results as environment-dependent evidence. Under MO2,
+tools that require the merged virtual filesystem must run through an authorized
+Windows/MO2 capability.
+
+## Safety
+
+Agent-specific hooks are supplemental safety mechanisms, not the universal security
+boundary.
+
+Prefer protections enforced below the model:
+- filesystem permissions;
+- read-only mounts;
+- constrained bridge identities;
+- validated project capabilities;
+- dry-run and structured tool wrappers.
+
+Do not bypass an operating-system permission boundary or weaken one merely to make an
+agent workflow more convenient.
+
+When a requested capability is unavailable, report the missing capability instead of
+silently using a broader or less-safe mechanism.
+
+## Agent adapters
+
+Read the relevant adapter documentation when using an agent-specific integration:
+
+- Pi: `adapters/pi/README.md`
+- Claude Code: `adapters/claude/README.md`
+
+Claude-specific hooks and skills under `.claude/` remain useful when Claude Code is
+the active agent, but other agents must not assume those hooks are present.
+
+## Existing detailed reference
+
+`CLAUDE.md` currently contains substantial historical tool usage and workflow
+documentation from the original Claude-oriented toolkit.
+
+Treat applicable technical material there as reference, but where it conflicts with
+this file on architecture, project resolution, environment ownership, or safety
+boundaries, this `AGENTS.md` is authoritative.
+
+The long-term direction is to move genuinely shared material out of `CLAUDE.md` and
+leave only Claude-specific integration there.
