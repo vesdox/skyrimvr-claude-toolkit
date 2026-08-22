@@ -1,35 +1,77 @@
 #!/bin/bash
-# Auto-backup any file before Claude edits it
-# Saves to .claude/backups/ with timestamp and logs to audit trail
-#
-# SETUP: Update the JQ variable below to point to your jq installation.
-
-JQ="{{JQ_PATH}}"
+set -euo pipefail
 
 INPUT=$(cat /dev/stdin)
-TOOL_NAME=$(echo "$INPUT" | "$JQ" -r '.tool_name // "unknown"')
-FILE_PATH=$(echo "$INPUT" | "$JQ" -r '.tool_input.file_path // empty')
 
-# Skip if no file path or file doesn't exist
+JQ="${JQ:-jq}"
+
+TOOL_NAME=$(
+    printf '%s' "$INPUT" |
+    "$JQ" -r '.tool_name // "unknown"'
+)
+
+FILE_PATH=$(
+    printf '%s' "$INPUT" |
+    "$JQ" -r '.tool_input.file_path // empty'
+)
+
+# Nothing to snapshot for a new/nonexistent file.
 [ -z "$FILE_PATH" ] && exit 0
 [ ! -f "$FILE_PATH" ] && exit 0
 
-# Only skip our transient workspace files (backups themselves, temp scripts, node_modules)
-echo "$FILE_PATH" | grep -qiE '(\.claude/backups/|\.claude/hooks/|\.claude/plans/|node_modules/)' && exit 0
+# Do not recursively snapshot transient agent/tooling material.
+printf '%s' "$FILE_PATH" |
+    grep -qiE '(\.claude/backups/|\.claude/hooks/|\.claude/plans/|node_modules/)' &&
+    exit 0
 
-# Create backup
-BACKUP_DIR="$CLAUDE_PROJECT_DIR/.claude/backups"
-mkdir -p "$BACKUP_DIR"
+HOOK_DIR="$(
+    cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &&
+    pwd
+)"
 
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-# Flatten path for backup filename: replace / and \ and : with _
-SAFE_NAME=$(echo "$FILE_PATH" | sed 's|[/\\:]|_|g' | sed 's|^_*||')
-BACKUP_PATH="$BACKUP_DIR/${TIMESTAMP}__${SAFE_NAME}"
+TOOLKIT_ROOT="$(
+    cd "$HOOK_DIR/../.." &&
+    pwd
+)"
 
-cp "$FILE_PATH" "$BACKUP_PATH" 2>/dev/null
+SNAPSHOT="$TOOLKIT_ROOT/tools/skyrim-snapshot.py"
 
-# Audit log -- append a record of every file touched
-AUDIT_LOG="$BACKUP_DIR/AUDIT_LOG.txt"
-echo "[$TIMESTAMP] $TOOL_NAME -> $FILE_PATH (backup: ${TIMESTAMP}__${SAFE_NAME})" >> "$AUDIT_LOG"
+deny_closed() {
+    "$JQ" -n \
+        --arg r "$1" \
+        '{
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: $r
+          }
+        }'
+    exit 0
+}
 
-exit 0
+if [ ! -x "$SNAPSHOT" ]; then
+    deny_closed "Shared snapshot service is unavailable: $SNAPSHOT"
+fi
+
+if ! RESULT=$(
+    "$SNAPSHOT" file "$FILE_PATH" \
+        --if-registered \
+        --reason "claude:$TOOL_NAME"
+); then
+    deny_closed "Shared snapshot service failed before editing: $FILE_PATH"
+fi
+
+STATUS=$(
+    printf '%s' "$RESULT" |
+    "$JQ" -r '.status'
+)
+
+case "$STATUS" in
+    snapshotted|skipped)
+        exit 0
+        ;;
+
+    *)
+        deny_closed "Unexpected result from shared snapshot service."
+        ;;
+esac

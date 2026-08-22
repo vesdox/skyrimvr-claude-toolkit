@@ -145,11 +145,26 @@ def snapshot_file(
     source_value: str,
     requested_project: str | None,
     reason: str,
+    if_registered: bool = False,
 ) -> dict:
-    project_id, project, repo, source = resolve_source(
-        source_value,
-        requested_project,
-    )
+    try:
+        project_id, project, repo, source = resolve_source(
+            source_value,
+            requested_project,
+        )
+    except ValueError as exc:
+        if (
+            if_registered
+            and requested_project is None
+            and "does not belong to any active registered project" in str(exc)
+        ):
+            source = Path(source_value).expanduser().resolve()
+            return {
+                "status": "skipped",
+                "reason": "source-not-in-registered-project",
+                "source": str(source),
+            }
+        raise
 
     if not source.exists():
         return {
@@ -250,6 +265,15 @@ def main():
         help="short reason recorded in the audit log",
     )
 
+    file_parser.add_argument(
+        "--if-registered",
+        action="store_true",
+        help=(
+            "snapshot only when the file belongs to an active registered "
+            "project; otherwise return a skipped result"
+        ),
+    )
+
     args = parser.parse_args()
 
     try:
@@ -258,6 +282,7 @@ def main():
                 args.path,
                 args.project,
                 args.reason,
+                args.if_registered,
             )
             print(json.dumps(result, indent=2))
 
