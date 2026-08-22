@@ -20,6 +20,7 @@ from plugin_locator import (
     search_plugins,
 )
 from pathlib import Path
+from save_locator import list_saves
 
 ROOT = Path(__file__).resolve().parent.parent
 PROJECTS_DIR = ROOT / "projects"
@@ -376,6 +377,52 @@ def cmd_run(args):
         raise SystemExit(process.returncode)
 
 
+def cmd_saves(args):
+    project = resolve_project(args.project)
+
+    try:
+        results = list_saves(
+            project,
+            args.environment,
+            ENVIRONMENTS_DIR,
+            search=args.search,
+            latest=args.latest,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}")
+
+    if args.json:
+        print(
+            json.dumps(
+                results,
+                indent=2,
+            )
+        )
+        return
+
+    print(f"Project: {args.project}")
+    print(f"Environment: {args.environment}")
+
+    if args.search:
+        print(f"Search: {args.search}")
+
+    print()
+
+    if not results:
+        print("No matching saves found.")
+        return
+
+    for item in results:
+        mib = item["size_bytes"] / (1024 * 1024)
+        cosave = "yes" if item["skse_cosave"] else "no"
+
+        print(f"Save:     {item['relative_path']}")
+        print(f"Modified: {item['modified_utc']}")
+        print(f"Size:     {mib:.2f} MiB")
+        print(f"SKSE:     {cosave}")
+        print()
+
+
 def cmd_plugins(args):
     project = resolve_project(args.project)
 
@@ -679,6 +726,38 @@ def main():
     )
     run_parser.set_defaults(
         func=cmd_run
+    )
+
+    saves_parser = subparsers.add_parser(
+        "saves",
+        help="list saves from a registered project environment",
+    )
+    saves_parser.add_argument(
+        "project",
+        help="registered project id",
+    )
+    saves_parser.add_argument(
+        "--environment",
+        required=True,
+        help="registered active project environment",
+    )
+    saves_parser.add_argument(
+        "--latest",
+        type=int,
+        default=10,
+        help="maximum number of newest saves to return",
+    )
+    saves_parser.add_argument(
+        "--search",
+        help="case-insensitive save-name search",
+    )
+    saves_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="return structured JSON for agent consumption",
+    )
+    saves_parser.set_defaults(
+        func=cmd_saves
     )
 
     plugins_parser = subparsers.add_parser(
