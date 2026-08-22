@@ -6,5 +6,6 @@ kind = "mo2"
 runtime = "skyrim-se"
 
 [evidence]
+saves = "/home/wodox/skyrim-dev/windows-ro/assos/profiles/ASSOS/saves"
 mods = "/home/wodox/skyrim-dev/windows-ro/assos"
 documents = "/home/wodox/skyrim-dev/windows-ro/skyrim-docs"

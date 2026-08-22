@@ -1,7 +1,7 @@
 id = "resaver"
 name = "ReSaver"
 
-status = "unconfigured"
+status = "available"
 execution = "linux"
 risk = "read"
 
@@ -16,3 +16,16 @@ Parse and inspect Skyrim save files for diagnostic and development purposes.
 notes = """
 Inspection does not imply permission to mutate or replace a user's live save.
 """
+
+
+[actions.info]
+handler = "resaver-read"
+description = "Read general metadata and structure from a Skyrim save."
+
+[actions.worries]
+handler = "resaver-read"
+description = "Run ReSaver's read-only problem report against a Skyrim save."
+
+[actions.freeze-report]
+handler = "resaver-read"
+description = "Inspect active scripts and suspended stacks for freeze diagnosis."

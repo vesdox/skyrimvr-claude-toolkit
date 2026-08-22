@@ -332,6 +332,7 @@ def cmd_run(args):
 
     known_handlers = {
         "inspect-plugin",
+        "resaver-read",
     }
 
     if handler not in known_handlers:
@@ -345,13 +346,26 @@ def cmd_run(args):
     if forwarded and forwarded[0] == "--":
         forwarded = forwarded[1:]
 
-    command = [
-        sys.executable,
-        str(Path(__file__).resolve()),
-        handler,
-        args.project,
-        *forwarded,
-    ]
+    if handler == "inspect-plugin":
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            handler,
+            args.project,
+            *forwarded,
+        ]
+    elif handler == "resaver-read":
+        command = [
+            sys.executable,
+            str(ROOT / "tools" / "skyrim-resaver-read.py"),
+            args.project,
+            args.action,
+            *forwarded,
+        ]
+    else:
+        raise SystemExit(
+            f"error: no execution route for capability handler: {handler}"
+        )
 
     process = subprocess.run(
         command,
