@@ -13,7 +13,10 @@ from capability_registry import (
     validate_project_grants,
 )
 
-from plugin_locator import resolve_plugin
+from plugin_locator import (
+    resolve_plugin,
+    search_plugins,
+)
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -303,6 +306,48 @@ def project_agent_block(project_id: str, project: dict) -> str:
     return "\n".join(lines)
 
 
+def cmd_plugins(args):
+    project = resolve_project(args.project)
+
+    try:
+        results = search_plugins(
+            project,
+            args.environment,
+            args.search,
+            ENVIRONMENTS_DIR,
+            args.limit,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}")
+
+    if args.json:
+        import json
+        print(
+            json.dumps(
+                results,
+                indent=2,
+            )
+        )
+        return
+
+    if not results:
+        print(
+            f"No matching plugins found for {args.search!r} "
+            f"in environment '{args.environment}'."
+        )
+        return
+
+    print(f"Project: {args.project}")
+    print(f"Environment: {args.environment}")
+    print(f"Search: {args.search}")
+    print()
+
+    for result in results:
+        print(f"Mod:    {result['mod']}")
+        print(f"Plugin: {result['relative_plugin']}")
+        print()
+
+
 def cmd_inspect_plugin(args):
     project = resolve_project(args.project)
 
@@ -540,6 +585,36 @@ def main():
     show_parser = subparsers.add_parser("show")
     show_parser.add_argument("project")
     show_parser.set_defaults(func=cmd_show)
+
+    plugins_parser = subparsers.add_parser(
+        "plugins",
+        help="search plugins in a registered project environment",
+    )
+    plugins_parser.add_argument("project")
+    plugins_parser.add_argument(
+        "--environment",
+        required=True,
+        help="registered project environment id",
+    )
+    plugins_parser.add_argument(
+        "--search",
+        required=True,
+        help="case-insensitive mod/plugin search text",
+    )
+    plugins_parser.add_argument(
+        "--limit",
+        type=int,
+        default=30,
+        help="maximum number of matching plugins to return",
+    )
+    plugins_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="return structured JSON for agent/tool consumption",
+    )
+    plugins_parser.set_defaults(
+        func=cmd_plugins
+    )
 
     inspect_plugin_parser = subparsers.add_parser(
         "inspect-plugin",

@@ -272,3 +272,107 @@ def resolve_plugin(
         "mod_directory": mod_dir,
         "plugin": plugin,
     }
+
+
+def search_plugins(
+    project: dict,
+    environment_id: str,
+    query: str,
+    environments_dir: Path,
+    limit: int = 30,
+) -> list[dict]:
+    if not query.strip():
+        raise ValueError("plugin search query must not be empty")
+
+    if limit < 1:
+        raise ValueError("plugin search limit must be at least 1")
+
+    environment = load_environment_for_project(
+        project,
+        environment_id,
+        environments_dir,
+    )
+
+    needle = query.casefold()
+    results = []
+
+    seen_mods = set()
+
+    for root in mod_roots(environment):
+        try:
+            children = sorted(
+                (
+                    child
+                    for child in root.iterdir()
+                    if child.is_dir()
+                ),
+                key=lambda path: path.name.casefold(),
+            )
+        except OSError:
+            continue
+
+        for mod_dir in children:
+            resolved_mod = mod_dir.resolve()
+
+            if resolved_mod in seen_mods:
+                continue
+
+            seen_mods.add(resolved_mod)
+
+            mod_match = needle in mod_dir.name.casefold()
+
+            plugins = plugin_files(mod_dir)
+
+            for plugin in plugins:
+                relative = plugin.relative_to(mod_dir)
+
+                plugin_match = (
+                    needle in plugin.name.casefold()
+                    or needle in str(relative).casefold()
+                )
+
+                if not mod_match and not plugin_match:
+                    continue
+
+                # Prefer exact/stronger matches while keeping ordering stable.
+                score = 0
+
+                if mod_dir.name.casefold() == needle:
+                    score += 100
+
+                if plugin.name.casefold() == needle:
+                    score += 100
+
+                if mod_dir.name.casefold().startswith(needle):
+                    score += 30
+
+                if plugin.name.casefold().startswith(needle):
+                    score += 30
+
+                if mod_match:
+                    score += 10
+
+                if plugin_match:
+                    score += 10
+
+                results.append(
+                    {
+                        "score": score,
+                        "environment": environment_id,
+                        "runtime": environment.get("runtime"),
+                        "mod": mod_dir.name,
+                        "plugin": plugin.name,
+                        "relative_plugin": str(relative),
+                        "path": str(plugin),
+                    }
+                )
+
+    results.sort(
+        key=lambda item: (
+            -item["score"],
+            item["mod"].casefold(),
+            item["plugin"].casefold(),
+        )
+    )
+
+    return results[:limit]
