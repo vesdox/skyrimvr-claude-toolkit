@@ -1,0 +1,20 @@
+id = "spriggit-author"
+name = "Spriggit Authoring"
+
+status = "unconfigured"
+execution = "linux"
+risk = "source-write"
+
+requires_mo2_vfs = false
+requires_running_game = false
+requires_environment_write = false
+
+description = """
+Deserialize validated structured Spriggit source into Skyrim plugin artifacts
+inside an authorized project source/output area.
+"""
+
+notes = """
+This capability is intentionally separate from read-only Spriggit inspection.
+Granting plugin inspection must not implicitly grant plugin authoring.
+"""

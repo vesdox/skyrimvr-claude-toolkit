@@ -1,20 +1,29 @@
 id = "spriggit"
-name = "Spriggit"
+name = "Spriggit Inspection"
 
-status = "unconfigured"
+status = "available"
 execution = "linux"
-risk = "source-write"
+risk = "read"
 
 requires_mo2_vfs = false
 requires_running_game = false
 requires_environment_write = false
 
 description = """
-Serialize Skyrim plugins into structured text for inspection/diffing and deserialize
-validated structured source back into plugin artifacts.
+Inspect Skyrim plugins by serializing them to structured YAML in the toolkit
+artifact area. This capability does not deserialize YAML back into plugins.
 """
 
 notes = """
-Localized plugins may require Windows-side serialization because Spriggit's Linux
-path can fail when localized string/BSA resolution is required.
+Localized plugins may fail on Linux when localized string/BSA resolution is
+required. Such plugins will eventually require a registered Windows serialization
+route rather than an improvised fallback.
 """
+
+[implementation]
+driver = "tools/skyrim-inspect-plugin.py"
+tool_manifest = ".config/dotnet-tools.json"
+package = "spriggit.cli"
+package_version = "0.40.0"
+game_release = "SkyrimSE"
+format_package = "Spriggit.Yaml"

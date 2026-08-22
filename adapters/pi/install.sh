@@ -22,7 +22,12 @@ ln -sfn \
     "$TOOLKIT_ROOT/tools/skyrim-snapshot-set.py" \
     "$BIN_DIR/skyrim-snapshot-set"
 
+ln -sfn \
+    "$TOOLKIT_ROOT/tools/skyrim-inspect-plugin.py" \
+    "$BIN_DIR/skyrim-inspect-plugin"
+
 echo "Installed Pi/toolkit command links:"
 echo "  $BIN_DIR/skyrim-agent"
 echo "  $BIN_DIR/skyrim-snapshot"
 echo "  $BIN_DIR/skyrim-snapshot-set"
+echo "  $BIN_DIR/skyrim-inspect-plugin"
