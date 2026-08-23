@@ -334,6 +334,7 @@ def cmd_run(args):
     known_handlers = {
         "inspect-plugin",
         "resaver-read",
+        "housecarl-read",
     }
 
     if handler not in known_handlers:
@@ -361,6 +362,13 @@ def cmd_run(args):
             str(ROOT / "tools" / "skyrim-resaver-read.py"),
             args.project,
             args.action,
+            *forwarded,
+        ]
+    elif handler == "housecarl-read":
+        command = [
+            sys.executable,
+            str(ROOT / "tools" / "skyrim-housecarl-read.py"),
+            args.project,
             *forwarded,
         ]
     else:

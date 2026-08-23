@@ -23,4 +23,4 @@ command = "./tools/windows-build.sh"
 before_command = []
 
 [capability_grants]
-allow = ["spriggit", "resaver"]
+allow = ["spriggit", "resaver", "housecarl"]

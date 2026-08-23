@@ -1,7 +1,7 @@
 id = "housecarl"
 name = "houseCARL"
 
-status = "unconfigured"
+status = "available"
 execution = "windows"
 risk = "read"
 
@@ -25,3 +25,8 @@ Windows read-only bridge that exposes only approved inspection actions.
 This capability does not use MO2 USVFS and must not be routed through the
 hardened Windows native-build identity.
 """
+
+[actions.read-record]
+handler = "housecarl-read"
+description = "Read one Skyrim record through the constrained Windows houseCARL bridge."
+

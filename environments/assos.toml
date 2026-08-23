@@ -9,3 +9,6 @@ runtime = "skyrim-se"
 saves = "/home/wodox/skyrim-dev/windows-ro/assos/profiles/ASSOS/saves"
 mods = "/home/wodox/skyrim-dev/windows-ro/assos"
 documents = "/home/wodox/skyrim-dev/windows-ro/skyrim-docs"
+
+[bridges.housecarl]
+url = "https://ellfone.tail56758a.ts.net"
