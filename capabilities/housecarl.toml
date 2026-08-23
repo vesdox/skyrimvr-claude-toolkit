@@ -2,18 +2,26 @@ id = "housecarl"
 name = "houseCARL"
 
 status = "unconfigured"
-execution = "windows-runtime"
-risk = "runtime"
+execution = "windows"
+risk = "read"
 
-requires_mo2_vfs = true
-requires_running_game = true
-requires_environment_write = true
+requires_mo2_vfs = false
+requires_running_game = false
+requires_environment_write = false
 
 description = """
-Controlled access to houseCARL-assisted Skyrim development/runtime functionality.
+Primary load-order-aware Skyrim data inspection through houseCARL and Mutagen.
+Reads the configured MO2 instance statically; MO2 does not need to be running.
 """
 
 notes = """
-Do not route this through the hardened Windows native-build identity. A dedicated
-runtime capability and Windows trust boundary must be designed before activation.
+houseCARL is the preferred capability for routine record, conflict, load-order,
+asset, and plugin inspection when its read-only bridge can satisfy the request.
+
+Do not expose the raw houseCARL MCP server to agents: the upstream server also
+contains authoring and mutation operations. Activation requires a constrained
+Windows read-only bridge that exposes only approved inspection actions.
+
+This capability does not use MO2 USVFS and must not be routed through the
+hardened Windows native-build identity.
 """

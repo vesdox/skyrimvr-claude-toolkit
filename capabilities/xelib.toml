@@ -3,18 +3,25 @@ name = "xelib"
 
 status = "unconfigured"
 execution = "windows-mo2"
-risk = "source-write"
+risk = "read"
 
 requires_mo2_vfs = true
 requires_running_game = false
 requires_environment_write = false
 
 description = """
-Inspect and modify Skyrim plugin records with load-order-aware override resolution.
+Read-only xEdit-native inspection and verification using XEditLib against an
+MO2 virtualized Skyrim Data directory.
 """
 
 notes = """
-The XEditLib DLL is Windows-only. Under MO2, full load-order operations must execute
-inside the MO2 virtual filesystem or results can be incomplete while appearing
-plausible.
+xelib is an explicit verification capability, not the default Skyrim data layer.
+Use houseCARL for routine load-order and record inspection when possible.
+
+XEditLib is Windows-only and expects a conventional merged Data directory.
+Under MO2, full load-order inspection therefore executes through MO2 USVFS.
+
+The underlying XEditLib API contains mutation and SaveFile operations, but this
+capability must expose read-only actions only. Future xelib authoring belongs in
+a separate capability and trust boundary.
 """
