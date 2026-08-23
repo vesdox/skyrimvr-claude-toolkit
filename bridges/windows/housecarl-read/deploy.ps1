@@ -13,12 +13,14 @@ $InspectAccount = "$env:COMPUTERNAME\SkyrimInspect"
 
 Write-Host '=== houseCARL read bridge deployment ==='
 
-if (-not (
-    [Security.Principal.WindowsPrincipal]
-    [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole(
+$CurrentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$CurrentPrincipal = New-Object Security.Principal.WindowsPrincipal($CurrentIdentity)
+
+$IsAdmin = $CurrentPrincipal.IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
-)) {
+)
+
+if (-not $IsAdmin) {
     throw 'deploy.ps1 must be run from an Administrator PowerShell'
 }
 
