@@ -108,22 +108,28 @@ if ($SourceHash -ne $DestinationHash) {
     throw 'deployed bridge hash does not match source'
 }
 
-Write-Host "`n--- Launch as SkyrimInspect ---"
+Write-Host "`n--- Launch through SkyrimInspect S4U task ---"
 
-$Cred = Get-Credential $InspectAccount
+$TaskName = 'SkyrimToolBridge-houseCARL-Read'
 
-Start-Process `
-    powershell.exe `
-    -Credential $Cred `
-    -ArgumentList `
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        "`"$Stage\launch-bridge.ps1`"" `
-    -RedirectStandardOutput "$Logs\bridge-out.txt" `
-    -RedirectStandardError "$Logs\bridge-err.txt" `
-    -WindowStyle Hidden
+$Task = Get-ScheduledTask `
+    -TaskName $TaskName `
+    -ErrorAction Stop
+
+if ($Task.Principal.LogonType -ne 'S4U') {
+    throw (
+        "refusing deployment: $TaskName is not configured for S4U"
+    )
+}
+
+if ($Task.Principal.UserId -notmatch '(^|\\)SkyrimInspect$') {
+    throw (
+        "refusing deployment: $TaskName has unexpected identity " +
+        "$($Task.Principal.UserId)"
+    )
+}
+
+Start-ScheduledTask -TaskName $TaskName
 
 Start-Sleep 2
 

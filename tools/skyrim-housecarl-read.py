@@ -383,11 +383,147 @@ def call_diff_record(
     return result
 
 
+def call_query_records(
+    base_url: str,
+    *,
+    record_type: str | None,
+    plugin: str | None,
+    editorid: str | None,
+    conflicts_only: bool,
+    limit: int | None,
+) -> dict:
+    if record_type is not None:
+        if not re.fullmatch(
+            r"[A-Za-z0-9_]{2,64}",
+            record_type,
+        ):
+            raise BridgeError(
+                "type must be a short record signature "
+                "or catalog name"
+            )
+
+    if plugin is not None:
+        if not PLUGIN_RE.fullmatch(plugin):
+            raise BridgeError(
+                "plugin must be a filename ending in "
+                ".esp, .esm, or .esl"
+            )
+
+    if editorid is not None:
+        if (
+            not editorid
+            or len(editorid) > 128
+            or "\r" in editorid
+            or "\n" in editorid
+        ):
+            raise BridgeError(
+                "editorid must be a non-empty single-line "
+                "substring of at most 128 characters"
+            )
+
+    if limit is not None:
+        if limit < 1 or limit > 50:
+            raise BridgeError(
+                "limit must be from 1 through 50"
+            )
+
+    # Intentionally require a scan bound even though houseCARL itself
+    # has broader legal query forms. This public capability must not
+    # expose an unbounded whole-load-order search.
+    if record_type is None and plugin is None:
+        raise BridgeError(
+            "query-records requires --type or --plugin"
+        )
+
+    body: dict = {}
+
+    if record_type is not None:
+        body["type"] = record_type
+
+    if plugin is not None:
+        body["plugin"] = plugin
+
+    if editorid is not None:
+        body["editorid"] = editorid
+
+    if conflicts_only:
+        body["conflicts_only"] = True
+
+    if limit is not None:
+        body["limit"] = limit
+
+    payload = json.dumps(body).encode("utf-8")
+
+    # Important: caller cannot choose an arbitrary bridge path.
+    url = f"{base_url}/query-records"
+
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=60,
+        ) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(
+            "utf-8",
+            errors="replace",
+        )
+        raise BridgeError(
+            f"houseCARL bridge returned HTTP "
+            f"{exc.code}: {detail[:1000]}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise BridgeError(
+            f"could not reach houseCARL bridge: "
+            f"{exc.reason}"
+        ) from exc
+
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BridgeError(
+            "houseCARL bridge returned invalid JSON"
+        ) from exc
+
+    if not isinstance(result, dict):
+        raise BridgeError(
+            "houseCARL bridge returned an unexpected response"
+        )
+
+    if result.get("ok") is not True:
+        raise BridgeError(
+            "houseCARL bridge rejected the request: "
+            f"{result.get('error', 'unknown error')}"
+        )
+
+    if result.get("operation") != "query-records":
+        raise BridgeError(
+            "houseCARL bridge returned an unexpected operation"
+        )
+
+    if "data" not in result:
+        raise BridgeError(
+            "houseCARL bridge returned no data"
+        )
+
+    return result
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Read one Skyrim record through the constrained "
-            "houseCARL bridge."
+            "Run an approved Skyrim record inspection through "
+            "the constrained houseCARL bridge."
         )
     )
 
@@ -398,7 +534,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--operation",
-        choices=("read-record", "diff-record"),
+        choices=("read-record", "diff-record", "query-records"),
         default="read-record",
         help="approved houseCARL bridge operation",
     )
@@ -411,13 +547,48 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--formid",
-        required=True,
         help="record identifier, e.g. 000007:Skyrim.esm",
     )
 
     parser.add_argument(
         "--plugin",
-        help="optional plugin filename for read-record",
+        help=(
+            "plugin filename for read-record or "
+            "query-records scope"
+        ),
+    )
+
+    parser.add_argument(
+        "--type",
+        dest="record_type",
+        help=(
+            "record signature or catalog name for query-records, "
+            "e.g. WEAP, NPC_, Region"
+        ),
+    )
+
+    parser.add_argument(
+        "--editorid",
+        help=(
+            "EditorID substring for query-records"
+        ),
+    )
+
+    parser.add_argument(
+        "--conflicts-only",
+        action="store_true",
+        help=(
+            "for query-records, return only records touched "
+            "by multiple plugins"
+        ),
+    )
+
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help=(
+            "maximum query-records matches, from 1 through 50"
+        ),
     )
 
     parser.add_argument(
@@ -478,10 +649,26 @@ def main() -> int:
         base_url = bridge_base_url(env)
 
         if args.operation == "read-record":
+            if not args.formid:
+                raise BridgeError(
+                    "read-record requires --formid"
+                )
+
             if args.plugin_a is not None or args.plugin_b is not None:
                 raise BridgeError(
                     "--plugin-a/--plugin-b are only valid "
                     "for diff-record"
+                )
+
+            if (
+                args.record_type is not None
+                or args.editorid is not None
+                or args.conflicts_only
+                or args.limit is not None
+            ):
+                raise BridgeError(
+                    "--type/--editorid/--conflicts-only/--limit "
+                    "are only valid for query-records"
                 )
 
             result = call_read_record(
@@ -494,9 +681,15 @@ def main() -> int:
             )
 
         elif args.operation == "diff-record":
+            if not args.formid:
+                raise BridgeError(
+                    "diff-record requires --formid"
+                )
+
             if args.plugin is not None:
                 raise BridgeError(
-                    "--plugin is only valid for read-record"
+                    "--plugin is only valid for read-record "
+                    "or query-records"
                 )
 
             if args.depth is not None:
@@ -510,6 +703,17 @@ def main() -> int:
                     "only valid for read-record"
                 )
 
+            if (
+                args.record_type is not None
+                or args.editorid is not None
+                or args.conflicts_only
+                or args.limit is not None
+            ):
+                raise BridgeError(
+                    "--type/--editorid/--conflicts-only/--limit "
+                    "are only valid for query-records"
+                )
+
             if not args.plugin_a or not args.plugin_b:
                 raise BridgeError(
                     "diff-record requires --plugin-a and --plugin-b"
@@ -521,6 +725,43 @@ def main() -> int:
                 plugin_a=args.plugin_a,
                 plugin_b=args.plugin_b,
                 fields=args.fields,
+            )
+
+        elif args.operation == "query-records":
+            if args.formid is not None:
+                raise BridgeError(
+                    "--formid is not valid for query-records"
+                )
+
+            if args.plugin_a is not None or args.plugin_b is not None:
+                raise BridgeError(
+                    "--plugin-a/--plugin-b are only valid "
+                    "for diff-record"
+                )
+
+            if args.fields:
+                raise BridgeError(
+                    "--field is not exposed for query-records"
+                )
+
+            if args.depth is not None:
+                raise BridgeError(
+                    "--depth is not exposed for query-records"
+                )
+
+            if args.resolve_names is not None:
+                raise BridgeError(
+                    "--resolve-names/--no-resolve-names are "
+                    "not exposed for query-records"
+                )
+
+            result = call_query_records(
+                base_url,
+                record_type=args.record_type,
+                plugin=args.plugin,
+                editorid=args.editorid,
+                conflicts_only=args.conflicts_only,
+                limit=args.limit,
             )
 
         else:

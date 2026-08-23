@@ -10,6 +10,7 @@ The bridge currently exposes only:
 - `GET /health`
 - `POST /read-record`
 - `POST /diff-record`
+- `POST /query-records`
 
 It does not expose arbitrary MCP tool names or the raw houseCARL MCP endpoint.
 

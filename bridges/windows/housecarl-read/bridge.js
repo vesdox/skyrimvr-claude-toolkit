@@ -262,6 +262,129 @@ function validateDiffRecord(input) {
   return args;
 }
 
+function validateQueryRecords(input) {
+  const args = {
+    // Fixed by the bridge.
+    format: 'json',
+    offset: 0,
+
+    // Summary-only responses at <=50 rows should stay comfortably
+    // below this ceiling, avoiding houseCARL's spill-to-file path.
+    max_chars: 250000
+  };
+
+  let hasBound = false;
+
+  if (input.type != null) {
+    if (
+      typeof input.type !== 'string' ||
+      !/^[A-Za-z0-9_]{2,64}$/.test(input.type)
+    ) {
+      throw new Error(
+        'type must be a short record signature or catalog name'
+      );
+    }
+
+    args.type = input.type;
+    hasBound = true;
+  }
+
+  if (input.plugin != null) {
+    const plugin = validatePluginName(
+      input.plugin,
+      'plugin'
+    );
+
+    args.plugins = [plugin];
+    hasBound = true;
+  }
+
+  if (input.editorid != null) {
+    if (
+      typeof input.editorid !== 'string' ||
+      input.editorid.length < 1 ||
+      input.editorid.length > 128 ||
+      /[\r\n]/.test(input.editorid)
+    ) {
+      throw new Error(
+        'editorid must be a short single-line substring'
+      );
+    }
+
+    args.editorid_contains = input.editorid;
+  }
+
+  if (input.conflicts_only != null) {
+    if (typeof input.conflicts_only !== 'boolean') {
+      throw new Error(
+        'conflicts_only must be boolean'
+      );
+    }
+
+    args.conflicts_only = input.conflicts_only;
+  }
+
+  const limit = input.limit == null
+    ? 25
+    : input.limit;
+
+  if (
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 50
+  ) {
+    throw new Error(
+      'limit must be an integer from 1 through 50'
+    );
+  }
+
+  args.limit = limit;
+
+  if (!hasBound) {
+    throw new Error(
+      'query-records requires type or plugin'
+    );
+  }
+
+  return args;
+}
+
+async function handleQueryRecords(req, res) {
+  const input = await readJson(req);
+  const args = validateQueryRecords(input);
+
+  const result = await callHouseCarl(
+    'housecarl_cross_plugin_query',
+    args
+  );
+
+  const textPart = result?.content?.find(
+    item => item?.type === 'text'
+  );
+
+  if (!textPart || typeof textPart.text !== 'string') {
+    throw new Error(
+      'houseCARL returned no text tool result'
+    );
+  }
+
+  let data;
+
+  try {
+    data = JSON.parse(textPart.text);
+  } catch {
+    data = {
+      raw: textPart.text
+    };
+  }
+
+  reply(res, 200, {
+    ok: true,
+    operation: 'query-records',
+    data
+  });
+}
+
 async function handleDiffRecord(req, res) {
   const input = await readJson(req);
   const args = validateDiffRecord(input);
@@ -358,6 +481,13 @@ const server = http.createServer(async (req, res) => {
       req.url === '/diff-record'
     ) {
       return await handleDiffRecord(req, res);
+    }
+
+    if (
+      req.method === 'POST' &&
+      req.url === '/query-records'
+    ) {
+      return await handleQueryRecords(req, res);
     }
 
     reply(res, 404, {

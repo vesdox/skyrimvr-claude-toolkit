@@ -34,3 +34,8 @@ description = "Read one Skyrim record through the constrained Windows houseCARL 
 [actions.diff-record]
 handler = "housecarl-read"
 description = "Compare two explicit plugin versions of one Skyrim record through the constrained Windows houseCARL bridge."
+
+
+[actions.query-records]
+handler = "housecarl-read"
+description = "Search a bounded set of Skyrim records by type, plugin scope, EditorID substring, and conflict status through the constrained Windows houseCARL bridge."
