@@ -369,6 +369,8 @@ def cmd_run(args):
             sys.executable,
             str(ROOT / "tools" / "skyrim-housecarl-read.py"),
             args.project,
+            "--operation",
+            args.action,
             *forwarded,
         ]
     else:

@@ -280,6 +280,109 @@ def call_read_record(
     return result
 
 
+def call_diff_record(
+    base_url: str,
+    *,
+    formid: str,
+    plugin_a: str,
+    plugin_b: str,
+    fields: list[str],
+) -> dict:
+    if not FORMID_RE.fullmatch(formid):
+        raise BridgeError(
+            "formid must look like 000007:Skyrim.esm"
+        )
+
+    if not PLUGIN_RE.fullmatch(plugin_a):
+        raise BridgeError(
+            "plugin-a must be a filename ending in "
+            ".esp, .esm, or .esl"
+        )
+
+    if not PLUGIN_RE.fullmatch(plugin_b):
+        raise BridgeError(
+            "plugin-b must be a filename ending in "
+            ".esp, .esm, or .esl"
+        )
+
+    fields = validate_fields(fields)
+
+    body: dict = {
+        "formid": formid,
+        "plugin_a": plugin_a,
+        "plugin_b": plugin_b,
+    }
+
+    if fields:
+        body["fields"] = fields
+
+    payload = json.dumps(body).encode("utf-8")
+
+    # Important: caller cannot choose an arbitrary path.
+    url = f"{base_url}/diff-record"
+
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=20,
+        ) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(
+            "utf-8",
+            errors="replace",
+        )
+        raise BridgeError(
+            f"houseCARL bridge returned HTTP "
+            f"{exc.code}: {detail[:1000]}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise BridgeError(
+            f"could not reach houseCARL bridge: "
+            f"{exc.reason}"
+        ) from exc
+
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BridgeError(
+            "houseCARL bridge returned invalid JSON"
+        ) from exc
+
+    if not isinstance(result, dict):
+        raise BridgeError(
+            "houseCARL bridge returned an unexpected response"
+        )
+
+    if result.get("ok") is not True:
+        raise BridgeError(
+            "houseCARL bridge rejected the request: "
+            f"{result.get('error', 'unknown error')}"
+        )
+
+    if result.get("operation") != "diff-record":
+        raise BridgeError(
+            "houseCARL bridge returned an unexpected operation"
+        )
+
+    if "data" not in result:
+        raise BridgeError(
+            "houseCARL bridge returned no data"
+        )
+
+    return result
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -291,6 +394,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "project",
         help="registered project id",
+    )
+
+    parser.add_argument(
+        "--operation",
+        choices=("read-record", "diff-record"),
+        default="read-record",
+        help="approved houseCARL bridge operation",
     )
 
     parser.add_argument(
@@ -307,7 +417,17 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--plugin",
-        help="optional plugin filename",
+        help="optional plugin filename for read-record",
+    )
+
+    parser.add_argument(
+        "--plugin-a",
+        help="first plugin version for diff-record",
+    )
+
+    parser.add_argument(
+        "--plugin-b",
+        help="second plugin version for diff-record",
     )
 
     parser.add_argument(
@@ -357,14 +477,56 @@ def main() -> int:
         env = require_environment(args.environment)
         base_url = bridge_base_url(env)
 
-        result = call_read_record(
-            base_url,
-            formid=args.formid,
-            plugin=args.plugin,
-            fields=args.fields,
-            depth=args.depth,
-            resolve_names=args.resolve_names,
-        )
+        if args.operation == "read-record":
+            if args.plugin_a is not None or args.plugin_b is not None:
+                raise BridgeError(
+                    "--plugin-a/--plugin-b are only valid "
+                    "for diff-record"
+                )
+
+            result = call_read_record(
+                base_url,
+                formid=args.formid,
+                plugin=args.plugin,
+                fields=args.fields,
+                depth=args.depth,
+                resolve_names=args.resolve_names,
+            )
+
+        elif args.operation == "diff-record":
+            if args.plugin is not None:
+                raise BridgeError(
+                    "--plugin is only valid for read-record"
+                )
+
+            if args.depth is not None:
+                raise BridgeError(
+                    "--depth is only valid for read-record"
+                )
+
+            if args.resolve_names is not None:
+                raise BridgeError(
+                    "--resolve-names/--no-resolve-names are "
+                    "only valid for read-record"
+                )
+
+            if not args.plugin_a or not args.plugin_b:
+                raise BridgeError(
+                    "diff-record requires --plugin-a and --plugin-b"
+                )
+
+            result = call_diff_record(
+                base_url,
+                formid=args.formid,
+                plugin_a=args.plugin_a,
+                plugin_b=args.plugin_b,
+                fields=args.fields,
+            )
+
+        else:
+            raise BridgeError(
+                f"unsupported operation: {args.operation}"
+            )
 
         json.dump(
             result,

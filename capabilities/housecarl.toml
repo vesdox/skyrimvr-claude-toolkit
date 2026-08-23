@@ -30,3 +30,7 @@ hardened Windows native-build identity.
 handler = "housecarl-read"
 description = "Read one Skyrim record through the constrained Windows houseCARL bridge."
 
+
+[actions.diff-record]
+handler = "housecarl-read"
+description = "Compare two explicit plugin versions of one Skyrim record through the constrained Windows houseCARL bridge."
