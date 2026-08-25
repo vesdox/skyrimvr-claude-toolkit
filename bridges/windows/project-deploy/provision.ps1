@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 $ExpectedBridgeHash = 'a3a023f2b400b898ac8ab485dc9c89cfe32810136af61dbfd85eccaf617478e5'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
-$ExpectedSmokeHash = 'd0864856b27e883542591503a0e48fd11bc0c14704f5ce97fdafc52966b3ad38'
+$ExpectedSmokeHash = '82de9d82f51fedb9d7554fe5dcdf9a614d2e40e25c504c0d2f20959765e72ed5'
 $Node = 'D:\Program Files\nodejs\node.exe'
 $Stage = 'C:\ProgramData\SkyrimToolBridge\project-deploy'
 $BridgeDirectory = Join-Path $Stage 'bridge'
@@ -133,7 +133,7 @@ $PasswordText = [Convert]::ToBase64String($Bytes) + '!aA7'
 $Password = ConvertTo-SecureString $PasswordText -AsPlainText -Force
 $User = New-LocalUser -Name $AccountName -Password $Password -AccountNeverExpires `
     -PasswordNeverExpires -UserMayNotChangePassword `
-    -Description 'Bounded Skyrim Agent Toolkit deployment bridge identity'
+    -Description 'Bounded Skyrim deployment bridge identity'
 $PasswordText = $null
 $UnexpectedGroups = @()
 foreach ($Group in Get-LocalGroup) {

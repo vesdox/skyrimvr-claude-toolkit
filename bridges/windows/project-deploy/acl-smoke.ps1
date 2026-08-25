@@ -9,7 +9,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$Token = [Guid]::NewGuid().ToString('N')
+$Token = [Guid]::NewGuid().ToString('N').Substring(0, 8)
 $Payload = [Text.Encoding]::UTF8.GetBytes("SkyrimDeploy ACL smoke $Token")
 $TargetProbe = Join-Path $TargetPluginRoot ".skyrim-agent-acl-smoke-$Token.tmp"
 
