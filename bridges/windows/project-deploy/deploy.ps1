@@ -9,7 +9,7 @@ $Stage = 'C:\ProgramData\SkyrimToolBridge\project-deploy'
 $Destination = "$Stage\bridge\bridge.js"
 $ConfigDestination = "$Stage\config.json"
 $TaskName = 'SkyrimToolBridge-Project-Deploy'
-$DeployAccount = "$env:COMPUTERNAME\SkyrimDeploy"
+$DeployAccount = "${env:COMPUTERNAME}\SkyrimDeploy"
 $ExpectedBridgeHash = 'a3a023f2b400b898ac8ab485dc9c89cfe32810136af61dbfd85eccaf617478e5'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 $ExpectedTarget = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development'
@@ -54,7 +54,7 @@ if ($Listener) {
     if ($Listener.LocalAddress -ne '127.0.0.1') { throw 'port 7347 is not loopback-only' }
     $Process = Get-CimInstance Win32_Process -Filter "ProcessId=$($Listener.OwningProcess)"
     $Owner = Invoke-CimMethod -InputObject $Process -MethodName GetOwner
-    if ($Owner.Domain -ne $env:COMPUTERNAME -or $Owner.User -ne 'SkyrimDeploy') {
+    if ($Owner.Domain -ne ${env:COMPUTERNAME} -or $Owner.User -ne 'SkyrimDeploy') {
         throw "port 7347 listener has unexpected owner $($Owner.Domain)\$($Owner.User)"
     }
     Stop-Process -Id $Listener.OwningProcess -Force
@@ -88,7 +88,7 @@ if (-not $NewListener) { throw 'deployment bridge did not listen within 20 secon
 if ($NewListener.LocalAddress -ne '127.0.0.1') { throw 'new listener is not loopback-only' }
 $NewProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($NewListener.OwningProcess)"
 $NewOwner = Invoke-CimMethod -InputObject $NewProcess -MethodName GetOwner
-if ($NewOwner.Domain -ne $env:COMPUTERNAME -or $NewOwner.User -ne 'SkyrimDeploy') {
+if ($NewOwner.Domain -ne ${env:COMPUTERNAME} -or $NewOwner.User -ne 'SkyrimDeploy') {
     throw "new listener has unexpected owner: $($NewOwner.Domain)\$($NewOwner.User)"
 }
 $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:7347/health' -Method Get

@@ -20,13 +20,13 @@ $BackupRoot = Join-Path $Stage 'backups'
 $TaskName = 'SkyrimToolBridge-Project-Deploy'
 $SmokeTaskName = 'SkyrimToolBridge-Project-Deploy-ACL-Smoke'
 $AccountName = 'SkyrimDeploy'
-$DeployAccount = "$env:COMPUTERNAME\$AccountName"
+$DeployAccount = "${env:COMPUTERNAME}\$AccountName"
 
 function Invoke-Icacls {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     & icacls.exe @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "icacls failed with exit code $LASTEXITCODE: $($Arguments -join ' ')"
+        throw "icacls failed with exit code ${LASTEXITCODE}: $($Arguments -join ' ')"
     }
 }
 
@@ -37,8 +37,10 @@ function Add-AllowRule {
         [System.Security.AccessControl.FileSystemRights]$Rights,
         [System.Security.AccessControl.InheritanceFlags]$Inheritance
     )
-    $Rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        $Identity, $Rights, $Inheritance,
+    $Rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $Identity,
+        $Rights,
+        $Inheritance,
         [System.Security.AccessControl.PropagationFlags]::None,
         [System.Security.AccessControl.AccessControlType]::Allow)
     $Acl.AddAccessRule($Rule) | Out-Null
@@ -187,7 +189,7 @@ for ($Attempt=0; $Attempt -lt 20; $Attempt++) {
 if (-not $Listener -or $Listener.LocalAddress -ne '127.0.0.1') { throw 'bridge did not become loopback-only within 20 seconds' }
 $Process = Get-CimInstance Win32_Process -Filter "ProcessId=$($Listener.OwningProcess)"
 $Owner = Invoke-CimMethod -InputObject $Process -MethodName GetOwner
-if ($Owner.User -ne $AccountName -or $Owner.Domain -ne $env:COMPUTERNAME -or
+if ($Owner.User -ne $AccountName -or $Owner.Domain -ne ${env:COMPUTERNAME} -or
     $Process.ExecutablePath -ne $Node -or $Process.CommandLine -notlike "*`"$Destination`"*") {
     throw 'listener process identity/executable/command line is not pinned'
 }
@@ -196,7 +198,7 @@ if ((Invoke-RestMethod 'http://127.0.0.1:7347/health').ok -ne $true) { throw 'lo
 Write-Host '=== Run target/all-unrelated/protected-file effective ACL smoke ==='
 $SmokeToken = [Guid]::NewGuid().ToString('N')
 $SmokeResult = Join-Path $BackupRoot "acl-smoke-$SmokeToken.json"
-$PowerShell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$PowerShell = "${env:SystemRoot}\System32\WindowsPowerShell\v1.0\powershell.exe"
 $SmokeArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$SmokeDestination`" " +
     "-TargetPluginRoot `"$TargetPluginRoot`" -ModsRoot `"$ModsRoot`" -TargetRoot `"$TargetRoot`" " +
     "-ConfigPath `"$ConfigDestination`" -BridgePath `"$Destination`" -Result `"$SmokeResult`""
