@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added project-aware bounded deployment with exact project/environment/target/set
+  registration, build-proven and hash-pinned native artifacts, dry-run destination
+  inspection, and a two-phase constrained Windows bridge with backups, race checks,
+  resulting-hash verification, and rollback. Hoarfrost is initially authorized only
+  for `Hoarfrost - Development` in ASSOS; load order, mod enablement, game launch,
+  saves, and runtime configuration remain outside the capability.
+
 ## v3.5.4 — 2026-08-07
 
 Two community-reported fixes, both verified independently here before merging.

@@ -6,7 +6,7 @@ repo = "/home/wodox/skyrim-dev/repos/Hoarfrost"
 
 [capabilities]
 windows_native_build = true
-runtime_deployment = false
+runtime_deployment = true
 
 [[environments]]
 id = "assos"
@@ -18,9 +18,127 @@ role = "vr-validation"
 
 [build.windows_native]
 command = "./tools/windows-build.sh"
+evidence_root = "/home/wodox/skyrim-dev/artifacts/windows-build"
+expected_source_sha256 = "1160ff69f848bd8deeb3f5b18c7d028dfaf16b438cb09aee45c61644ecfe97a5"
+
+[[deployment.targets]]
+id = "development"
+environment = "assos"
+mod = "Hoarfrost - Development"
+sets = ["ordinary-finger-native", "ordinary-finger-manual-tests"]
+
+[[deployment.sets]]
+id = "ordinary-finger-native"
+provenance = "windows-native-build"
+
+[[deployment.sets.files]]
+id = "hoarfrost-native-dll"
+source = "Hoarfrost.dll"
+destination = "SKSE/Plugins/Hoarfrost.dll"
+expected_sha256 = "43879baf61b19dacc6641b7d6022ae40cc0e8c194aa2d7c98d17b2b8a04beb14"
+
+[[deployment.sets.files]]
+id = "hoarfrost-native-pdb"
+source = "Hoarfrost.pdb"
+destination = "SKSE/Plugins/Hoarfrost.pdb"
+expected_sha256 = "e9f52dcfddc8f3cb37e76c383dfe6910c45464bb98586a81d49d48b93461dbbe"
+
+[[deployment.sets]]
+id = "ordinary-finger-manual-tests"
+provenance = "repository"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-tr0"
+source = "tools/manual-testing/regional-tissue-risk/tr0.txt"
+destination = "tr0.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-tr1"
+source = "tools/manual-testing/regional-tissue-risk/tr1.txt"
+destination = "tr1.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-tr2"
+source = "tools/manual-testing/regional-tissue-risk/tr2.txt"
+destination = "tr2.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-tr3"
+source = "tools/manual-testing/regional-tissue-risk/tr3.txt"
+destination = "tr3.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-tr4"
+source = "tools/manual-testing/regional-tissue-risk/tr4.txt"
+destination = "tr4.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-descriptor-wic-cloak-heat"
+source = "tools/manual-testing/equipment-descriptors/regional-heat-flow-insulation/90_Hoarfrost_WIC_Cloak_Heat_Proof.ini"
+destination = "SKSE/Plugins/Hoarfrost/EquipmentDescriptors/90_Hoarfrost_WIC_Cloak_Heat_Proof.ini"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-descriptor-severe-cold"
+source = "tools/manual-testing/temperature-descriptors/consequence-state/90_Hoarfrost_Severe_Cold_Consequence_Proof.ini"
+destination = "SKSE/Plugins/Hoarfrost/TemperatureDescriptors/90_Hoarfrost_Severe_Cold_Consequence_Proof.ini"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-ti-save"
+source = "tools/manual-testing/persistent-localized-injury/ti-save.txt"
+destination = "ti-save.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-fg0"
+source = "tools/manual-testing/persistent-localized-injury/fg0.txt"
+destination = "fg0.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-fg-save"
+source = "tools/manual-testing/persistent-localized-injury/fg-save.txt"
+destination = "fg-save.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-fixture-preflight"
+source = "tools/manual-testing/persistent-localized-injury/fg-fixture-preflight.txt"
+destination = "fg-fixture-preflight.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-melee-0"
+source = "tools/manual-testing/persistent-localized-injury/fg-melee-0.txt"
+destination = "fg-melee-0.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-melee-1"
+source = "tools/manual-testing/persistent-localized-injury/fg-melee-1.txt"
+destination = "fg-melee-1.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-bow-0"
+source = "tools/manual-testing/persistent-localized-injury/fg-bow-0.txt"
+destination = "fg-bow-0.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-bow-2"
+source = "tools/manual-testing/persistent-localized-injury/fg-bow-2.txt"
+destination = "fg-bow-2.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-magic-0"
+source = "tools/manual-testing/persistent-localized-injury/fg-magic-0.txt"
+destination = "fg-magic-0.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-magic-3"
+source = "tools/manual-testing/persistent-localized-injury/fg-magic-3.txt"
+destination = "fg-magic-3.txt"
+
+[[deployment.sets.files]]
+id = "ordinary-finger-batch-fixture-reset"
+source = "tools/manual-testing/persistent-localized-injury/fg-fixture-reset.txt"
+destination = "fg-fixture-reset.txt"
 
 [snapshots]
 before_command = []
 
 [capability_grants]
-allow = ["spriggit", "resaver", "housecarl"]
+allow = ["spriggit", "resaver", "housecarl", "project-deploy"]

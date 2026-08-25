@@ -33,3 +33,8 @@ Risk classes:
 
 Environment-write and runtime capabilities require explicit authorization beyond
 ordinary project source access.
+
+The bounded `project-deploy` capability additionally requires registry entries for
+the exact environment, MO2 mod target, deployment set, owned source file, and
+relative destination. Native artifacts require registered build evidence. Load-order
+mutation is intentionally not part of this capability.

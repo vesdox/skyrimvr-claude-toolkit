@@ -38,6 +38,18 @@ native_windows_validation_must_use_registered_capability = true
 linux_build_may_substitute_for_required_windows_build = false
 successful_build_implies_deployment_authorization = false
 
+[deployment]
+registered_project_files_only = true
+registered_environment_and_target_only = true
+native_artifacts_require_build_proof = true
+report_hashes_before_and_after = true
+backup_replaced_artifacts = true
+load_order_mutation = "separate-capability"
+launch_game = false
+modify_saves = false
+modify_runtime_configuration = false
+read_only_evidence_write = false
+
 [mo2]
 load_order_dependent_operations_require_virtual_filesystem = true
 physical_data_directory_is_not_merged_view = true

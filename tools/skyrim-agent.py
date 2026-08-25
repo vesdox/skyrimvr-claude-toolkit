@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -19,7 +20,7 @@ from plugin_locator import (
     resolve_plugin,
     search_plugins,
 )
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from save_locator import list_saves
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -192,6 +193,22 @@ def validate() -> list[str]:
                     "core policy must deny live-environment writes by default"
                 )
 
+            deployment_policy = policy.get("deployment", {})
+            for key in (
+                "registered_project_files_only",
+                "registered_environment_and_target_only",
+                "native_artifacts_require_build_proof",
+                "report_hashes_before_and_after",
+                "backup_replaced_artifacts",
+            ):
+                if deployment_policy.get(key) is not True:
+                    errors.append(f"core deployment policy must require {key}")
+
+            if deployment_policy.get("load_order_mutation") != "separate-capability":
+                errors.append("core deployment policy must separate load-order mutation")
+
+    deployment_physical_targets = {}
+
     for project_id, project in projects.items():
         repo = project.get("repo")
         status = project.get("status")
@@ -203,6 +220,7 @@ def validate() -> list[str]:
                 f"{project_id}: active project repo does not exist: {repo}"
             )
 
+        project_environment_ids = set()
         for reference in project.get("environments", []):
             env_id = reference.get("id")
 
@@ -214,6 +232,140 @@ def validate() -> list[str]:
                 errors.append(
                     f"{project_id}: unknown environment '{env_id}'"
                 )
+            else:
+                project_environment_ids.add(env_id)
+
+        deployment = project.get("deployment", {})
+        sets = deployment.get("sets", [])
+        targets = deployment.get("targets", [])
+        set_ids = set()
+        artifact_ids = set()
+
+        if not isinstance(sets, list) or not isinstance(targets, list):
+            errors.append(f"{project_id}: deployment sets/targets must be arrays")
+            continue
+
+        if any(
+            isinstance(file_set, dict)
+            and file_set.get("provenance") == "windows-native-build"
+            for file_set in sets
+        ):
+            source_hash = (
+                project.get("build", {})
+                .get("windows_native", {})
+                .get("expected_source_sha256")
+            )
+            if (
+                not isinstance(source_hash, str)
+                or not re.fullmatch(r"[0-9A-Fa-f]{64}", source_hash)
+            ):
+                errors.append(
+                    f"{project_id}: native deployment requires a pinned source archive SHA256"
+                )
+
+        for file_set in sets:
+            if not isinstance(file_set, dict) or not isinstance(file_set.get("id"), str):
+                errors.append(f"{project_id}: deployment set missing id")
+                continue
+            set_id = file_set["id"]
+            if set_id in set_ids:
+                errors.append(f"{project_id}: duplicate deployment set '{set_id}'")
+            set_ids.add(set_id)
+            if file_set.get("provenance") not in ("repository", "windows-native-build"):
+                errors.append(f"{project_id}: deployment set '{set_id}' has invalid provenance")
+            files = file_set.get("files", [])
+            if not isinstance(files, list) or not files:
+                errors.append(f"{project_id}: deployment set '{set_id}' has no files")
+                continue
+            provenance = file_set.get("provenance")
+            for item in files:
+                if not isinstance(item, dict):
+                    errors.append(f"{project_id}: deployment set '{set_id}' has invalid file")
+                    continue
+                artifact_id = item.get("id")
+                source = item.get("source")
+                destination = item.get("destination")
+                if not all(isinstance(value, str) and value for value in (artifact_id, source, destination)):
+                    errors.append(f"{project_id}: deployment set '{set_id}' has incomplete file metadata")
+                    continue
+                if artifact_id in artifact_ids:
+                    errors.append(f"{project_id}: duplicate deployment artifact '{artifact_id}'")
+                artifact_ids.add(artifact_id)
+                if provenance == "windows-native-build":
+                    expected_hash = item.get("expected_sha256")
+                    if (
+                        not isinstance(expected_hash, str)
+                        or not re.fullmatch(r"[0-9A-Fa-f]{64}", expected_hash)
+                    ):
+                        errors.append(
+                            f"{project_id}: native deployment artifact '{artifact_id}' "
+                            "has no valid pinned SHA256"
+                        )
+                for label, value in (("source", source), ("destination", destination)):
+                    normalized = value.replace("\\", "/")
+                    path = Path(normalized)
+                    if path.is_absolute() or ".." in path.parts or "." in path.parts:
+                        errors.append(
+                            f"{project_id}: deployment artifact '{artifact_id}' has unsafe {label}"
+                        )
+
+        target_keys = set()
+        for target in targets:
+            if not isinstance(target, dict):
+                errors.append(f"{project_id}: invalid deployment target")
+                continue
+            target_id = target.get("id")
+            env_id = target.get("environment")
+            mod = target.get("mod")
+            allowed_sets = target.get("sets")
+            if (
+                not isinstance(target_id, str)
+                or not isinstance(mod, str)
+                or not mod
+                or mod in (".", "..")
+                or any(character in mod for character in "/\\:\r\n")
+            ):
+                errors.append(f"{project_id}: deployment target has incomplete or unsafe identity")
+                continue
+            target_key = (env_id, target_id)
+            if target_key in target_keys:
+                errors.append(
+                    f"{project_id}: duplicate deployment target '{target_id}' for '{env_id}'"
+                )
+            target_keys.add(target_key)
+            if env_id not in project_environment_ids:
+                errors.append(f"{project_id}: deployment target '{target_id}' has unregistered environment")
+            if not isinstance(allowed_sets, list) or not allowed_sets:
+                errors.append(f"{project_id}: deployment target '{target_id}' has no set allowlist")
+            else:
+                for set_id in allowed_sets:
+                    if set_id not in set_ids:
+                        errors.append(
+                            f"{project_id}: deployment target '{target_id}' references unknown set '{set_id}'"
+                        )
+            environment = environments.get(env_id, {})
+            env_deployment = environment.get("deployment", {})
+            windows_mods_root = env_deployment.get("mo2_mods_root_windows")
+            if not windows_mods_root:
+                errors.append(f"{project_id}: deployment environment '{env_id}' has no Windows mods root")
+            else:
+                physical_target = str(PureWindowsPath(windows_mods_root) / mod).casefold()
+                prior = deployment_physical_targets.get(physical_target)
+                if prior is not None:
+                    errors.append(
+                        f"{project_id}: deployment target '{target_id}' duplicates physical target {prior}"
+                    )
+                else:
+                    deployment_physical_targets[physical_target] = f"{project_id}:{target_id}"
+            if not env_deployment.get("mo2_mods_root_evidence"):
+                errors.append(f"{project_id}: deployment environment '{env_id}' has no evidence mods root")
+            deploy_bridge = environment.get("bridges", {}).get("project_deploy", {})
+            if not deploy_bridge.get("url"):
+                errors.append(f"{project_id}: deployment environment '{env_id}' has no bridge URL")
+            if deploy_bridge.get("protocol") != "project-deploy-v1":
+                errors.append(f"{project_id}: deployment environment '{env_id}' has invalid bridge protocol")
+            if not deploy_bridge.get("backup_root_windows"):
+                errors.append(f"{project_id}: deployment environment '{env_id}' has no backup root")
 
     try:
         catalog = load_catalog(CAPABILITIES_DIR)
@@ -262,6 +414,7 @@ def project_agent_block(project_id: str, project: dict) -> str:
 
     capabilities = project.get("capabilities", {})
     native_build = capabilities.get("windows_native_build", False)
+    runtime_deployment = capabilities.get("runtime_deployment", False)
 
     lines = [
         AGENT_BLOCK_START,
@@ -288,6 +441,17 @@ def project_agent_block(project_id: str, project: dict) -> str:
         lines.append(
             "- Do not invoke the repository-local build implementation directly "
             "unless explicitly debugging the toolkit/bridge itself."
+        )
+
+    if runtime_deployment:
+        lines.append(
+            f"- Plan authorized bounded deployment with `skyrim-agent deploy "
+            f"{project_id} --environment <id> --target <id> --set <id> --dry-run`."
+        )
+        lines.append(
+            "- Deployment covers only registered project-owned files and targets; "
+            "it does not authorize load-order changes, game launch, saves, or "
+            "runtime configuration mutation."
         )
 
     lines += [
@@ -335,6 +499,7 @@ def cmd_run(args):
         "inspect-plugin",
         "resaver-read",
         "housecarl-read",
+        "project-deploy",
     }
 
     if handler not in known_handlers:
@@ -371,6 +536,13 @@ def cmd_run(args):
             args.project,
             "--operation",
             args.action,
+            *forwarded,
+        ]
+    elif handler == "project-deploy":
+        command = [
+            sys.executable,
+            str(ROOT / "tools" / "project_deploy.py"),
+            args.project,
             *forwarded,
         ]
     else:
@@ -667,6 +839,30 @@ def cmd_evidence(args):
 
 
 
+def cmd_deploy(args):
+    command = [
+        sys.executable,
+        str(ROOT / "tools" / "project_deploy.py"),
+        args.project,
+        "--environment",
+        args.environment,
+        "--target",
+        args.target,
+    ]
+
+    for set_id in args.sets:
+        command += ["--set", set_id]
+
+    if args.build_evidence:
+        command += ["--build-evidence", args.build_evidence]
+
+    command.append("--apply" if args.apply else "--dry-run")
+
+    result = subprocess.run(command, cwd=ROOT)
+    raise SystemExit(result.returncode)
+
+
+
 def cmd_build(args):
     project, repo, script = get_native_build(args.project)
 
@@ -853,6 +1049,45 @@ def main():
     evidence_parser = subparsers.add_parser("evidence")
     evidence_parser.add_argument("project")
     evidence_parser.set_defaults(func=cmd_evidence)
+
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        help="deploy explicitly registered project files through a bounded bridge",
+    )
+    deploy_parser.add_argument("project", help="registered project id")
+    deploy_parser.add_argument(
+        "--environment",
+        required=True,
+        help="registered project environment id",
+    )
+    deploy_parser.add_argument(
+        "--target",
+        required=True,
+        help="registered deployment target id",
+    )
+    deploy_parser.add_argument(
+        "--set",
+        action="append",
+        dest="sets",
+        required=True,
+        help="registered deployment set; may be repeated",
+    )
+    deploy_parser.add_argument(
+        "--build-evidence",
+        help="registered Windows build evidence directory for native sets",
+    )
+    deploy_mode = deploy_parser.add_mutually_exclusive_group()
+    deploy_mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="plan only (the safe default)",
+    )
+    deploy_mode.add_argument(
+        "--apply",
+        action="store_true",
+        help="copy through the constrained deployment bridge",
+    )
+    deploy_parser.set_defaults(func=cmd_deploy)
 
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("project")

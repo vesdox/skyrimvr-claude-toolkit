@@ -1,0 +1,31 @@
+id = "project-deploy"
+name = "Bounded project deployment"
+
+status = "available"
+execution = "windows"
+risk = "environment-write"
+
+requires_mo2_vfs = false
+requires_running_game = false
+requires_environment_write = true
+
+description = """
+Copies only project-owned files explicitly registered for one project, environment,
+and MO2 mod target. Native DLL/PDB files require a passing registered Windows-build
+evidence directory and manifest verification before the deployment bridge is called.
+"""
+
+notes = """
+Dry-run reads destination hashes through the registered read-only evidence view but
+never writes through that mount. Apply uses a two-phase constrained bridge: plan
+reports and pins existing hashes, then apply rechecks them, backs up replacements,
+atomically copies registered files, and verifies resulting SHA256 values.
+
+This capability cannot edit plugins.txt/loadorder.txt, enable or disable mods, launch
+Skyrim, modify saves, or change game/runtime configuration. Load-order mutation is a
+separate future capability.
+"""
+
+[actions.deploy]
+handler = "project-deploy"
+description = "Plan or apply one bounded registered deployment set."

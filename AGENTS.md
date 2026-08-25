@@ -42,6 +42,13 @@ runtime/deployment capability has been authorized for that operation.
 
 Build permission does not imply deployment permission.
 
+Authorized deployment must use `skyrim-agent deploy` with a registered project,
+environment, target, and file set. Native artifacts require registered Windows-build
+evidence. Dry-run may inspect destination hashes through read-only evidence, but
+actual copying must use the constrained deployment bridge and must report pre-copy
+and resulting hashes. Deployment does not authorize load-order/profile mutation,
+mod enablement, game launch, save changes, or runtime configuration changes.
+
 ## Project-aware commands
 
 Before acting on a project, resolve it through the shared registry.
@@ -51,6 +58,7 @@ Examples:
     ./tools/skyrim-agent.py show hoarfrost
     ./tools/skyrim-agent.py evidence hoarfrost
     ./tools/skyrim-agent.py build hoarfrost --dry-run
+    skyrim-agent deploy hoarfrost --environment assos --target development --set <registered-set> --dry-run
     skyrim-agent inspect-plugin <project-id> --environment <environment-id> --mod "<mod-name>"
 
 Use the project ID supplied by the user or task. Do not substitute another project

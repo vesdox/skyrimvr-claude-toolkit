@@ -15,4 +15,9 @@ The toolkit must support an arbitrary number of projects. It must not assume:
 Project source repositories are authoritative for development once a project has
 been migrated into this workspace.
 
+Deployment authorization is represented separately from build permission. A project
+deployment registry names exact environment/mod targets, target-specific allowed
+sets, file provenance (`repository` or `windows-native-build`), source paths, and
+relative destination paths. Catalog presence alone does not grant deployment.
+
 A project may be marked pending before its repository exists.

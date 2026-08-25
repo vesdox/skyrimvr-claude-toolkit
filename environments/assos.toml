@@ -10,5 +10,14 @@ saves = "/home/wodox/skyrim-dev/windows-ro/assos/profiles/ASSOS/saves"
 mods = "/home/wodox/skyrim-dev/windows-ro/assos"
 documents = "/home/wodox/skyrim-dev/windows-ro/skyrim-docs"
 
+[deployment]
+mo2_mods_root_windows = 'D:\Games\Wabbajack\Modlists\ASSOS\mods'
+mo2_mods_root_evidence = "/home/wodox/skyrim-dev/windows-ro/assos/mods"
+
 [bridges.housecarl]
 url = "https://ellfone.tail56758a.ts.net"
+
+[bridges.project_deploy]
+url = "https://ellfone.tail56758a.ts.net/project-deploy"
+protocol = "project-deploy-v1"
+backup_root_windows = 'C:\ProgramData\SkyrimToolBridge\project-deploy\backups'
