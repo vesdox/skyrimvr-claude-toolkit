@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Source,
     [Parameter(Mandatory = $true)][string]$Config,
-    [Parameter(Mandatory = $true)][string]$SmokeScript
+    [Parameter(Mandatory = $true)][string]$SmokeScript,
+    [Parameter(Mandatory = $true)][string]$BatchRightScript
 )
 
 Set-StrictMode -Version Latest
@@ -10,12 +11,14 @@ $ErrorActionPreference = 'Stop'
 $ExpectedBridgeHash = 'a3a023f2b400b898ac8ab485dc9c89cfe32810136af61dbfd85eccaf617478e5'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 $ExpectedSmokeHash = '82de9d82f51fedb9d7554fe5dcdf9a614d2e40e25c504c0d2f20959765e72ed5'
+$ExpectedBatchRightHash = 'c68303a99d2bc05d96c903a50d52adf5e8c2d101e6b24592676a04115070defb'
 $Node = 'D:\Program Files\nodejs\node.exe'
 $Stage = 'C:\ProgramData\SkyrimToolBridge\project-deploy'
 $BridgeDirectory = Join-Path $Stage 'bridge'
 $Destination = Join-Path $BridgeDirectory 'bridge.js'
 $ConfigDestination = Join-Path $Stage 'config.json'
 $SmokeDestination = Join-Path $Stage 'acl-smoke.ps1'
+$BatchRightDestination = Join-Path $Stage 'batch-right.ps1'
 $BackupRoot = Join-Path $Stage 'backups'
 $TaskName = 'SkyrimToolBridge-Project-Deploy'
 $SmokeTaskName = 'SkyrimToolBridge-Project-Deploy-ACL-Smoke'
@@ -88,14 +91,16 @@ foreach ($Module in 'Microsoft.PowerShell.LocalAccounts','ScheduledTasks','NetTC
 if (Get-Process SkyrimSE -ErrorAction SilentlyContinue) { throw 'refusing provisioning while SkyrimSE is running' }
 if (Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue) { throw 'SkyrimDeploy already exists; initial provisioning refuses partial state' }
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { throw 'deployment task already exists; initial provisioning refuses partial state' }
+if (Get-ScheduledTask -TaskName $SmokeTaskName -ErrorAction SilentlyContinue) { throw 'ACL smoke task already exists; initial provisioning refuses partial state' }
 if (Test-Path -LiteralPath $Stage) { throw 'deployment service stage already exists; initial provisioning refuses partial state' }
 if (Get-NetTCPConnection -LocalPort 7347 -State Listen -ErrorAction SilentlyContinue) { throw 'port 7347 already has a listener' }
-foreach ($Path in @($Source, $Config, $SmokeScript, $Node)) {
+foreach ($Path in @($Source, $Config, $SmokeScript, $BatchRightScript, $Node)) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "required file does not exist: $Path" }
 }
 Assert-Hash $Source $ExpectedBridgeHash
 Assert-Hash $Config $ExpectedConfigHash
 Assert-Hash $SmokeScript $ExpectedSmokeHash
+Assert-Hash $BatchRightScript $ExpectedBatchRightHash
 $NodeVersion = (& $Node --version)
 if ($LASTEXITCODE -ne 0 -or $NodeVersion -notmatch '^v([2-9][0-9]|[1-9][0-9]{2,})\.') { throw "Node 20+ is required: $NodeVersion" }
 & $Node --check $Source
@@ -143,6 +148,8 @@ foreach ($Group in Get-LocalGroup) {
     }
 }
 if ($UnexpectedGroups.Count -gt 0) { throw "unexpected SkyrimDeploy groups: $($UnexpectedGroups -join ', ')" }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $BatchRightScript -ExpectedSid $User.SID.Value
+if ($LASTEXITCODE -ne 0) { throw "batch-right helper failed: $LASTEXITCODE" }
 
 Write-Host '=== Deny ASSOS writes, then isolate and allow only registered target ==='
 $DenyWrites = "${DeployAccount}:(OI)(CI)(WD,AD,WEA,DC,WA,DE)"
@@ -161,7 +168,13 @@ Set-ExactDirectoryAcl $BackupRoot ([System.Security.AccessControl.FileSystemRigh
 Copy-Item -LiteralPath $Source -Destination $Destination
 Copy-Item -LiteralPath $Config -Destination $ConfigDestination
 Copy-Item -LiteralPath $SmokeScript -Destination $SmokeDestination
-foreach ($Pair in @(@($Destination,$ExpectedBridgeHash),@($ConfigDestination,$ExpectedConfigHash),@($SmokeDestination,$ExpectedSmokeHash))) {
+Copy-Item -LiteralPath $BatchRightScript -Destination $BatchRightDestination
+foreach ($Pair in @(
+    @($Destination,$ExpectedBridgeHash),
+    @($ConfigDestination,$ExpectedConfigHash),
+    @($SmokeDestination,$ExpectedSmokeHash),
+    @($BatchRightDestination,$ExpectedBatchRightHash)
+)) {
     Set-ExactFileAcl $Pair[0]
     Assert-Hash $Pair[0] $Pair[1]
 }
@@ -171,14 +184,17 @@ $Action = New-ScheduledTaskAction -Execute $Node -Argument "`"$Destination`"" -W
 $TaskPrincipal = New-ScheduledTaskPrincipal -UserId $DeployAccount -LogonType S4U -RunLevel Limited
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $TaskName -Action $Action -Principal $TaskPrincipal `
+Register-ScheduledTask -TaskName $TaskName -TaskPath '\' -Action $Action -Principal $TaskPrincipal `
     -Settings $Settings -Description 'Bounded Hoarfrost ASSOS deployment bridge' | Out-Null
-$Task = Get-ScheduledTask -TaskName $TaskName
+$Task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
 if (
-    $Task.Principal.UserId -ne $DeployAccount -or $Task.Principal.LogonType -ne 'S4U' -or
+    $Task.TaskPath -ne '\' -or -not $Task.Settings.Enabled -or $Task.Triggers.Count -ne 0 -or
+    $Task.Principal.UserId -notin @($AccountName, $DeployAccount) -or $Task.Principal.LogonType -ne 'S4U' -or
     $Task.Principal.RunLevel -ne 'Limited' -or $Task.Actions.Count -ne 1 -or
-    $Task.Actions[0].Execute -ne $Node -or $Task.Actions[0].Arguments -ne "`"$Destination`""
-) { throw 'registered service task does not match pinned identity/action' }
+    $Task.Actions[0].Execute -ne $Node -or $Task.Actions[0].Arguments -ne "`"$Destination`"" -or
+    $Task.Actions[0].WorkingDirectory -ne $Stage -or $Task.Settings.ExecutionTimeLimit -ne 'PT0S' -or
+    $Task.Settings.DisallowStartIfOnBatteries -or $Task.Settings.StopIfGoingOnBatteries
+) { throw 'registered service task does not match exact bounded definition' }
 Start-ScheduledTask -TaskName $TaskName
 $Listener = $null
 for ($Attempt=0; $Attempt -lt 20; $Attempt++) {

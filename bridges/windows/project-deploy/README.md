@@ -59,8 +59,27 @@ config and bridge files. Provisioning leaves Tailscale unchanged until those loc
 checks pass; the owner then adds the path-scoped Serve route as a separate observable
 step and verifies that the existing read route is unchanged.
 
+`batch-right.ps1` grants only `SeBatchLogonRight` to an exact expected
+`SkyrimDeploy` SID and verifies readback. This right is required by the local-account
+S4U pattern; the established `SkyrimInspect` S4U identity has the same right.
+
 `acl-smoke.ps1` is an internal fixed-operation helper run only through a temporary
 S4U task by `provision.ps1`; it is not a general command runner.
+
+`resume-task.ps1` is a one-time, SID-pinned recovery for the diagnosed ASSOS partial
+provisioning state. It preserves existing ACLs/files, grants the missing batch-logon
+right, registers or validates only the exact service task, starts the loopback bridge,
+and runs the fixed ACL smoke. It does not configure Tailscale or deploy artifacts.
+
+### Diagnosed ASSOS partial state (2026-08-25)
+
+The first task-registration attempt stopped with `0x80070005` after creating SID
+`S-1-5-21-3046562540-2879210194-691397096-1014`, applying the ASSOS deny and isolated
+Hoarfrost target allow, and protecting/copying bridge configuration. Read-only
+inspection established: no deployment task, no port 7347 listener, no Tailscale
+change, no candidate deployment, and no account rights for `SkyrimDeploy`; the
+working local `SkyrimInspect` S4U identity has `SeBatchLogonRight`. Recovery must not
+rerun the ASSOS ACL provisioning.
 
 `deploy.ps1` updates only an already-provisioned protected bridge/config. It requires
 pinned source/config hashes and the exact single Hoarfrost/ASSOS allowlist, then

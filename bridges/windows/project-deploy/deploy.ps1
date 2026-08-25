@@ -9,7 +9,8 @@ $Stage = 'C:\ProgramData\SkyrimToolBridge\project-deploy'
 $Destination = "$Stage\bridge\bridge.js"
 $ConfigDestination = "$Stage\config.json"
 $TaskName = 'SkyrimToolBridge-Project-Deploy'
-$DeployAccount = "${env:COMPUTERNAME}\SkyrimDeploy"
+$AccountName = 'SkyrimDeploy'
+$DeployAccount = "${env:COMPUTERNAME}\$AccountName"
 $ExpectedBridgeHash = 'a3a023f2b400b898ac8ab485dc9c89cfe32810136af61dbfd85eccaf617478e5'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 $ExpectedTarget = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development'
@@ -44,7 +45,7 @@ if (
 ) { throw 'deployment config is not the exact pinned Hoarfrost/ASSOS allowlist' }
 
 $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-if ($Task.Principal.LogonType -ne 'S4U' -or $Task.Principal.UserId -ne $DeployAccount) {
+if ($Task.Principal.LogonType -ne 'S4U' -or $Task.Principal.UserId -notin @($AccountName, $DeployAccount)) {
     throw "$TaskName must be an S4U task owned by the dedicated SkyrimDeploy identity"
 }
 
