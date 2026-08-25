@@ -5,7 +5,7 @@ const path = require('path');
 
 const HOST = '127.0.0.1';
 const PORT = 7347;
-const CONFIG_PATH = process.env.SKYRIM_DEPLOY_CONFIG ||
+const CONFIG_PATH =
   'C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\config.json';
 const MAX_REQUEST_BYTES = 180 * 1024 * 1024;
 const MAX_CONTENT_BYTES = 128 * 1024 * 1024;

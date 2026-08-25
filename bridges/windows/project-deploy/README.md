@@ -47,10 +47,26 @@ the Linux client or bridge source.
 - backups: registry-configured protected backup root
 - scheduled task: `SkyrimToolBridge-Project-Deploy` (S4U, `SkyrimDeploy`)
 
-`deploy.ps1` updates only an already-provisioned protected bridge/config and verifies
-source/deployed hashes, task identity, loopback binding, and health. Initial account,
-ACL, scheduled-task, and Tailscale Serve provisioning remains an owner/admin action;
-it is intentionally not exposed through an agent command.
+`provision.ps1` is the owner/admin initial-provisioning entry point. It creates a
+random-password non-admin `SkyrimDeploy` identity, denies that identity inherited
+write/delete rights across the ASSOS tree, explicitly grants Modify only on the
+registered `Hoarfrost - Development` target, protects service/config state from
+unprivileged writes, registers the S4U task, proves listener ownership, and runs a
+one-shot effective-permission smoke. That smoke must write/hash/remove a temporary
+file under the real registered `SKSE\Plugins` destination, refuse temporary writes
+across every unrelated ASSOS mod root, and refuse write-open access to the protected
+config and bridge files. Provisioning leaves Tailscale unchanged until those local
+checks pass; the owner then adds the path-scoped Serve route as a separate observable
+step and verifies that the existing read route is unchanged.
+
+`acl-smoke.ps1` is an internal fixed-operation helper run only through a temporary
+S4U task by `provision.ps1`; it is not a general command runner.
+
+`deploy.ps1` updates only an already-provisioned protected bridge/config. It requires
+pinned source/config hashes and the exact single Hoarfrost/ASSOS allowlist, then
+verifies deployed hashes, exact S4U task identity, loopback binding, post-start
+process owner, and health. Initial provisioning and future updates remain owner/admin actions; they
+are intentionally not exposed through an agent or general remote-shell command.
 
 ## Client behavior
 
