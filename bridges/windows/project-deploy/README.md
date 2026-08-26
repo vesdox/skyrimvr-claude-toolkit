@@ -29,10 +29,11 @@ omit payload bytes and raw plan tokens.
 ## Trust boundary
 
 `SkyrimDeploy` has an ASSOS-wide write/delete deny and Modify only on the registered
-`Hoarfrost - Development` target and protected backup tree. Worker, wrapper,
-configuration, and authorized-key files are read-only to that identity and writable
-only by Administrators/SYSTEM. These filesystem ACLs remain the backstop even if a
-request is malformed.
+`Hoarfrost - Development` target and protected backup tree. Worker and configuration files are read-only to that identity; the wrapper and Node
+runtime are read/execute only. The authorized-key file is accessible only to
+Administrators/SYSTEM. All trusted material lives below a dedicated protected root
+whose inheritance is disabled and whose ancestry is checked before execution or SSH
+activation. These filesystem ACLs remain the backstop even if a request is malformed.
 
 Never reuse the build (`HoarfrostBuild`/`SkyrimBuildWorkers`), transfer
 (`HoarfrostTransfer`), read-only (`SkyrimInspect`), or Administrator identities for
@@ -53,13 +54,22 @@ paths are registered in `projects/hoarfrost.toml`.
 
 ## Protected runtime layout
 
-- worker: `C:\ProgramData\SkyrimToolBridge\project-deploy\bridge\bridge.js`
-- Node runtime: `C:\ProgramData\SkyrimToolBridge\project-deploy\runtime\node.exe`
-- wrapper: `C:\ProgramData\SkyrimToolBridge\project-deploy\invoke-ssh.ps1`
-- allowlist: `C:\ProgramData\SkyrimToolBridge\project-deploy\config.json`
-- backups/audit: registry-configured protected backup root
-- public key: `C:\ProgramData\SkyrimToolBridge\openssh\authorized_keys`
+- protected root: `C:\Program Files\SkyrimDeployBridge`
+- worker: `C:\Program Files\SkyrimDeployBridge\bridge\bridge.js`
+- Node runtime: `C:\Program Files\SkyrimDeployBridge\runtime\node.exe`
+- wrapper: `C:\Program Files\SkyrimDeployBridge\invoke-ssh.ps1`
+- allowlist: `C:\Program Files\SkyrimDeployBridge\config.json`
+- public key: `C:\Program Files\SkyrimDeployBridge\openssh\authorized_keys`
+- backups/audit: registry-configured writable tree under `C:\ProgramData\SkyrimToolBridge`
 - transport: existing Windows OpenSSH 9.5p2 service on pinned port 22 and host key
+
+`C:\ProgramData` and the shared `SkyrimToolBridge` root were rejected for trusted
+material because their observed ACLs grant `BUILTIN\Users` write rights. The existing
+`C:\Program Files` ACL grants broad identities read/execute only and is used without
+changing its ACL. The integrity check distinguishes mutation rights on each trusted
+object from delete-child/ACL-control rights on higher ancestors; create-only rights on
+a higher ancestor cannot replace an existing protected child. Inherit-only ACEs are
+not misclassified as effective rights on the ancestor object.
 
 There is deliberately no deployment Scheduled Task, port 7347 listener, Tailscale
 Serve route, deployment SFTP subsystem, or persistent deployment process.
@@ -79,7 +89,7 @@ or ambiguous `SkyrimDeploy` blocks, does not create an account, and does not alt
 ASSOS ACLs. Before changing the live service it:
 
 1. verifies source hashes, non-administrator account SID, absent task/listener,
-   protected parent/runtime ACLs, and the exact signed Node.js 24.15.0 runtime;
+   every privileged path and ancestry boundary, and the exact signed Node.js 24.15.0 runtime;
 2. preserves every pre-existing `sshd_config` byte while inserting exactly one
    canonical, structurally validated managed `SkyrimDeploy` Match block;
 3. runs `sshd.exe -t -f` against the baseline, candidate, installed, and restored

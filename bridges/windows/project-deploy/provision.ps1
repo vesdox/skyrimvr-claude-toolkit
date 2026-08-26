@@ -10,8 +10,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ExpectedSid = 'S-1-5-21-3046562540-2879210194-691397096-1014'
-$ExpectedWorkerHash = '99eabaafbd3e0b850ae0d3e8a891e4443d57dd2900a2423f5c9804a5e87e6442'
-$ExpectedWrapperHash = '33289873434a13117fd004476c66016dd9d6e4ef187719067cbf8614ee38036a'
+$ExpectedWorkerHash = '54c66da67ca4d2e1276a3f420ac3f6226e6a4572cca1e56553fe9168bc07d1a8'
+$ExpectedWrapperHash = '8f2485244d2bf3270bb01fe56e9490c1be6d7cdd2e8e1fb2a8931618f08cf30b'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 $ExpectedPublicKeyHash = '91bd33e543bf43ef38683a630da7961e2a50a7060dec4e3a55fd79ac7c1bbb53'
 $ExpectedNodeHash = '3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5'
@@ -20,24 +20,28 @@ $ExpectedNodeFileVersion = '24.15.0'
 $ExpectedNodeSignerThumbprint = '53EFB21DD2F03E171CFF88977C2B0B1E8DF7E2A2'
 $AccountName = 'SkyrimDeploy'
 $DeployAccount = "${env:COMPUTERNAME}\$AccountName"
-$ToolkitRoot = 'C:\ProgramData\SkyrimToolBridge'
-$Stage = Join-Path $ToolkitRoot 'project-deploy'
-$BridgeDirectory = Join-Path $Stage 'bridge'
-$BackupRoot = Join-Path $Stage 'backups'
+$SharedToolkitRoot = 'C:\ProgramData\SkyrimToolBridge'
+$BackupRoot = Join-Path $SharedToolkitRoot 'project-deploy\backups'
+$ProtectedParent = 'C:\Program Files'
+$ProtectedRoot = Join-Path $ProtectedParent 'SkyrimDeployBridge'
+$BridgeDirectory = Join-Path $ProtectedRoot 'bridge'
 $WorkerDestination = Join-Path $BridgeDirectory 'bridge.js'
-$WrapperDestination = Join-Path $Stage 'invoke-ssh.ps1'
-$ConfigDestination = Join-Path $Stage 'config.json'
-$RuntimeDirectory = Join-Path $Stage 'runtime'
+$WrapperDestination = Join-Path $ProtectedRoot 'invoke-ssh.ps1'
+$ConfigDestination = Join-Path $ProtectedRoot 'config.json'
+$RuntimeDirectory = Join-Path $ProtectedRoot 'runtime'
 $NodeDestination = Join-Path $RuntimeDirectory 'node.exe'
+$KeyDirectory = Join-Path $ProtectedRoot 'openssh'
+$AuthorizedKeys = Join-Path $KeyDirectory 'authorized_keys'
 $SshDirectory = 'C:\ProgramData\ssh'
 $SshConfig = Join-Path $SshDirectory 'sshd_config'
-$KeyDirectory = 'C:\ProgramData\SkyrimToolBridge\openssh'
-$AuthorizedKeys = Join-Path $KeyDirectory 'authorized_keys'
 $Sshd = 'C:\Windows\System32\OpenSSH\sshd.exe'
+$PowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $TaskName = 'SkyrimToolBridge-Project-Deploy'
 $CandidateDll = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development\SKSE\Plugins\Hoarfrost.dll'
 $CandidatePdb = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development\SKSE\Plugins\Hoarfrost.pdb'
-$ForceCommand = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:/ProgramData/SkyrimToolBridge/project-deploy/invoke-ssh.ps1'
+$ForceCommandScript = "& 'C:\Program Files\SkyrimDeployBridge\invoke-ssh.ps1'"
+$ForceCommandEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ForceCommandScript))
+$ForceCommand = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $ForceCommandEncoded"
 
 function Assert-Hash {
     param([string]$Path, [string]$Expected)
@@ -128,7 +132,7 @@ function Set-KeyDirectoryAcl {
     Set-Acl -LiteralPath $Path -AclObject $Acl
 }
 
-function Set-ProtectedRuntimeDirectoryAcl {
+function Set-ProtectedDirectoryAcl {
     param([string]$Path)
     $Acl = New-Object System.Security.AccessControl.DirectorySecurity
     $Acl.SetAccessRuleProtection($true, $false)
@@ -140,10 +144,8 @@ function Set-ProtectedRuntimeDirectoryAcl {
     Set-Acl -LiteralPath $Path -AclObject $Acl
 }
 
-function Assert-NoBroadWriteAcl {
-    param([string]$Path)
-    $Dangerous = [System.Security.AccessControl.FileSystemRights]'WriteData, AppendData, CreateFiles, CreateDirectories, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership, WriteAttributes, WriteExtendedAttributes'
-    $BroadSids = @(
+function Get-UntrustedSids {
+    return @(
         $ExpectedSid,
         (Get-LocalUser -Name 'HoarfrostTransfer' -ErrorAction Stop).SID.Value,
         (Get-LocalUser -Name 'HoarfrostBuild' -ErrorAction Stop).SID.Value,
@@ -151,17 +153,149 @@ function Assert-NoBroadWriteAcl {
         'S-1-5-11',
         'S-1-5-32-545'
     )
+}
+
+function Get-OwnerSid {
+    param([System.Security.AccessControl.FileSystemSecurity]$Acl)
+    try { return ([Security.Principal.NTAccount]$Acl.Owner).Translate([Security.Principal.SecurityIdentifier]).Value } catch { return $Acl.Owner }
+}
+
+function Test-AceAppliesToObject {
+    param([System.Security.AccessControl.FileSystemAccessRule]$Rule)
+    return -not ($Rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly)
+}
+
+function Get-RawFileSystemRights {
+    param([System.Security.AccessControl.FileSystemRights]$Rights)
+    return [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$Rights), 0)
+}
+
+function Test-MutationRights {
+    param([System.Security.AccessControl.FileSystemRights]$Rights)
+    $Dangerous = [System.Security.AccessControl.FileSystemRights]'WriteData, AppendData, CreateFiles, CreateDirectories, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership, WriteAttributes, WriteExtendedAttributes'
+    $RawRights = Get-RawFileSystemRights $Rights
+    return [bool](($Rights -band $Dangerous) -or ($RawRights -band [uint32]1073741824) -or ($RawRights -band [uint32]268435456))
+}
+
+function Test-AclControlRights {
+    param([System.Security.AccessControl.FileSystemRights]$Rights)
+    $Control = [System.Security.AccessControl.FileSystemRights]'ChangePermissions, TakeOwnership'
+    $RawRights = Get-RawFileSystemRights $Rights
+    return [bool](($Rights -band $Control) -or ($RawRights -band [uint32]268435456))
+}
+
+function Test-AncestorReplacementRights {
+    param([System.Security.AccessControl.FileSystemRights]$Rights)
+    $Replacement = [System.Security.AccessControl.FileSystemRights]'Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
+    $RawRights = Get-RawFileSystemRights $Rights
+    return [bool](($Rights -band $Replacement) -or ($RawRights -band [uint32]268435456))
+}
+
+function Assert-NoBroadMutationAcl {
+    param([string]$Path)
+    $BroadSids = Get-UntrustedSids
     $Acl = Get-Acl -LiteralPath $Path
-    $OwnerSid = $Acl.Owner
-    try { $OwnerSid = ([Security.Principal.NTAccount]$Acl.Owner).Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
-    if ($OwnerSid -in $BroadSids) { throw "runtime path has an untrusted owner: $Path owner=$OwnerSid" }
+    $OwnerSid = Get-OwnerSid $Acl
+    if ($OwnerSid -in $BroadSids) { throw "trusted path has an untrusted owner: $Path owner=$OwnerSid" }
     foreach ($Rule in $Acl.Access) {
-        if ($Rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+        if ($Rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or -not (Test-AceAppliesToObject $Rule)) { continue }
         $Sid = $Rule.IdentityReference.Value
         try { $Sid = $Rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
-        if ($Sid -in $BroadSids -and ($Rule.FileSystemRights -band $Dangerous)) {
-            throw "runtime path grants broad write/replace rights: $Path sid=$Sid rights=$($Rule.FileSystemRights)"
+        if ($Sid -in $BroadSids -and (Test-MutationRights $Rule.FileSystemRights)) {
+            throw "trusted path grants broad mutation rights: $Path sid=$Sid rights=$($Rule.FileSystemRights)"
         }
+    }
+}
+
+function Assert-NoBroadAncestorReplacementAcl {
+    param([string]$Path)
+    $BroadSids = Get-UntrustedSids
+    $Acl = Get-Acl -LiteralPath $Path
+    $OwnerSid = Get-OwnerSid $Acl
+    if ($OwnerSid -in $BroadSids) { throw "trusted ancestor has an untrusted owner: $Path owner=$OwnerSid" }
+    foreach ($Rule in $Acl.Access) {
+        if ($Rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or -not (Test-AceAppliesToObject $Rule)) { continue }
+        $Sid = $Rule.IdentityReference.Value
+        try { $Sid = $Rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
+        if ($Sid -in $BroadSids -and (Test-AncestorReplacementRights $Rule.FileSystemRights)) {
+            throw "trusted ancestor grants broad child-replacement/control rights: $Path sid=$Sid rights=$($Rule.FileSystemRights)"
+        }
+    }
+}
+
+function Assert-Ed25519PublicKeyLine {
+    param([string]$Line)
+    $Parts = @($Line -split '\s+', 3)
+    if ($Parts.Count -lt 2 -or $Parts[0] -cne 'ssh-ed25519') { throw 'deployment public key is not Ed25519' }
+    try { $Blob = [Convert]::FromBase64String($Parts[1]) } catch { throw 'deployment public key has invalid base64' }
+    if ($Blob.Length -ne 51) { throw "deployment Ed25519 public-key blob has unexpected length: $($Blob.Length)" }
+    $AlgorithmLength = [Net.IPAddress]::NetworkToHostOrder([BitConverter]::ToInt32($Blob, 0))
+    $Algorithm = [Text.Encoding]::ASCII.GetString($Blob, 4, $AlgorithmLength)
+    $KeyLengthOffset = 4 + $AlgorithmLength
+    $KeyLength = [Net.IPAddress]::NetworkToHostOrder([BitConverter]::ToInt32($Blob, $KeyLengthOffset))
+    if ($AlgorithmLength -ne 11 -or $Algorithm -cne 'ssh-ed25519' -or $KeyLength -ne 32 -or ($KeyLengthOffset + 4 + $KeyLength) -ne $Blob.Length) {
+        throw 'deployment public key has an invalid Ed25519 wire encoding'
+    }
+}
+
+function Assert-WritableStateRootIntegrity {
+    param([string]$Path)
+    $FullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if ((Get-Item -LiteralPath $FullPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "writable state root is a reparse point: $FullPath"
+    }
+    $Acl = Get-Acl -LiteralPath $FullPath
+    $OwnerSid = Get-OwnerSid $Acl
+    if ($OwnerSid -in (Get-UntrustedSids)) { throw "writable state root has an untrusted owner: $FullPath owner=$OwnerSid" }
+    $NonDeploySids = @(Get-UntrustedSids | Where-Object { $_ -ne $ExpectedSid })
+    foreach ($Rule in $Acl.Access) {
+        if ($Rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or -not (Test-AceAppliesToObject $Rule)) { continue }
+        $Sid = $Rule.IdentityReference.Value
+        try { $Sid = $Rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
+        if ($Sid -in $NonDeploySids -and (Test-MutationRights $Rule.FileSystemRights)) {
+            throw "writable state root grants unrelated broad mutation rights: $FullPath sid=$Sid rights=$($Rule.FileSystemRights)"
+        }
+        if ($Sid -eq $ExpectedSid -and (Test-AclControlRights $Rule.FileSystemRights)) {
+            throw "deployment identity controls writable state-root ACL: $FullPath rights=$($Rule.FileSystemRights)"
+        }
+    }
+    $Ancestor = Split-Path -Parent $FullPath
+    while ($Ancestor) {
+        if ((Get-Item -LiteralPath $Ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "writable state ancestor is a reparse point: $Ancestor"
+        }
+        Assert-NoBroadAncestorReplacementAcl $Ancestor
+        $Next = Split-Path -Parent $Ancestor
+        if (-not $Next -or $Next -ieq $Ancestor) { break }
+        $Ancestor = $Next
+    }
+}
+
+function Assert-ProtectedPathIntegrity {
+    param([string]$Path, [string]$Anchor)
+    $FullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $FullAnchor = [IO.Path]::GetFullPath($Anchor).TrimEnd('\')
+    if ($FullPath -ine $FullAnchor -and -not $FullPath.StartsWith($FullAnchor + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "trusted path escaped its integrity anchor: path=$FullPath anchor=$FullAnchor"
+    }
+    $Current = $FullPath
+    while ($true) {
+        if ((Get-Item -LiteralPath $Current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "trusted path chain contains a reparse point: $Current"
+        }
+        Assert-NoBroadMutationAcl $Current
+        if ($Current -ieq $FullAnchor) { break }
+        $Current = Split-Path -Parent $Current
+    }
+    $Ancestor = Split-Path -Parent $FullAnchor
+    while ($Ancestor) {
+        if ((Get-Item -LiteralPath $Ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "trusted ancestor chain contains a reparse point: $Ancestor"
+        }
+        Assert-NoBroadAncestorReplacementAcl $Ancestor
+        $Next = Split-Path -Parent $Ancestor
+        if (-not $Next -or $Next -ieq $Ancestor) { break }
+        $Ancestor = $Next
     }
 }
 
@@ -170,7 +304,7 @@ $Principal = [Security.Principal.WindowsPrincipal]::new($Identity)
 if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'forced-command provisioning requires Administrator Windows PowerShell'
 }
-if (-not [Environment]::Is64BitProcess -or $PSVersionTable.PSVersion.Major -ne 5) {
+if (-not [Environment]::Is64BitProcess -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
     throw 'forced-command provisioning requires 64-bit Windows PowerShell 5.1'
 }
 if (Get-Process SkyrimSE -ErrorAction SilentlyContinue) { throw 'refusing provisioning while SkyrimSE is running' }
@@ -186,18 +320,7 @@ if ($SshService.StartName -notmatch '^(?i:LocalSystem|NT AUTHORITY\\SYSTEM)$') {
     throw "sshd is not running as LocalSystem: $($SshService.StartName)"
 }
 if ($SshService.PathName -notmatch [regex]::Escape($Sshd)) { throw "sshd service does not use pinned binary: $($SshService.PathName)" }
-$SavedErrorActionPreference = $ErrorActionPreference
-try {
-    $ErrorActionPreference = 'Continue'
-    $SshVersionOutput = @(& $Sshd '-V' 2>&1)
-    $SshVersionExit = $LASTEXITCODE
-} finally {
-    $ErrorActionPreference = $SavedErrorActionPreference
-}
-if ($SshVersionExit -ne 0) { throw "sshd -V failed with exit code $SshVersionExit" }
-$SshVersion = ($SshVersionOutput | ForEach-Object { [string]$_ } | Out-String).Trim()
-if ($SshVersion -notmatch '(?i)OpenSSH_for_Windows_9\.5p2\b') { throw "expected OpenSSH_for_Windows_9.5p2: $SshVersion" }
-foreach ($Path in @($Worker,$Wrapper,$Config,$PublicKey,$NodeRuntime,$SshConfig,$Sshd,$ToolkitRoot,$Stage,$BridgeDirectory,$BackupRoot)) {
+foreach ($Path in @($Worker,$Wrapper,$Config,$PublicKey,$NodeRuntime,$SshConfig,$Sshd,$PowerShell,$SharedToolkitRoot,$BackupRoot,$ProtectedParent,$SshDirectory)) {
     if (-not (Test-Path -LiteralPath $Path)) { throw "required path is absent: $Path" }
 }
 Assert-Hash $Worker $ExpectedWorkerHash
@@ -216,23 +339,71 @@ if ($NodeSignature.Status -ne [System.Management.Automation.SignatureStatus]::Va
     $ActualNodeSignerThumbprint -ine $ExpectedNodeSignerThumbprint) {
     throw "staged Node Authenticode provenance mismatch: status=$($NodeSignature.Status) signer=$ActualNodeSignerThumbprint"
 }
-foreach ($RuntimePath in @($ToolkitRoot,$Stage,$BridgeDirectory)) {
-    Assert-NoBroadWriteAcl $RuntimePath
+Assert-ProtectedPathIntegrity $ProtectedParent $ProtectedParent
+Assert-WritableStateRootIntegrity $BackupRoot
+Assert-ProtectedPathIntegrity $SshConfig $SshDirectory
+Assert-ProtectedPathIntegrity $Sshd 'C:\Windows'
+Assert-ProtectedPathIntegrity $PowerShell 'C:\Windows'
+$SavedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $SshVersionOutput = @(& $Sshd '-V' 2>&1)
+    $SshVersionExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $SavedErrorActionPreference
 }
-if (Test-Path -LiteralPath $RuntimeDirectory -PathType Container) {
-    $UnexpectedRuntimeEntries = @(Get-ChildItem -LiteralPath $RuntimeDirectory -Force | Where-Object { $_.FullName -ine $NodeDestination })
-    if ($UnexpectedRuntimeEntries.Count -ne 0) { throw 'protected runtime directory contains unmanaged entries' }
-    Assert-NoBroadWriteAcl $RuntimeDirectory
-    if (Test-Path -LiteralPath $NodeDestination -PathType Leaf) {
-        Assert-Hash $NodeDestination $ExpectedNodeHash
-        Assert-NoBroadWriteAcl $NodeDestination
+if ($SshVersionExit -ne 0) { throw "sshd -V failed with exit code $SshVersionExit" }
+$SshVersion = ($SshVersionOutput | ForEach-Object { [string]$_ } | Out-String).Trim()
+if ($SshVersion -notmatch '(?i)OpenSSH_for_Windows_9\.5p2\b') { throw "expected OpenSSH_for_Windows_9.5p2: $SshVersion" }
+if ((Test-Path -LiteralPath $ProtectedRoot) -and -not (Test-Path -LiteralPath $ProtectedRoot -PathType Container)) {
+    throw 'protected deployment root exists but is not a directory'
+}
+if (Test-Path -LiteralPath $ProtectedRoot -PathType Container) {
+    foreach ($ExpectedDirectory in @($ProtectedRoot,$BridgeDirectory,$RuntimeDirectory,$KeyDirectory)) {
+        if ((Test-Path -LiteralPath $ExpectedDirectory) -and -not (Test-Path -LiteralPath $ExpectedDirectory -PathType Container)) {
+            throw "protected directory slot has the wrong object type: $ExpectedDirectory"
+        }
     }
+    foreach ($ExpectedFile in @($WorkerDestination,$WrapperDestination,$ConfigDestination,$NodeDestination,$AuthorizedKeys)) {
+        if ((Test-Path -LiteralPath $ExpectedFile) -and -not (Test-Path -LiteralPath $ExpectedFile -PathType Leaf)) {
+            throw "protected file slot has the wrong object type: $ExpectedFile"
+        }
+    }
+    if ((Get-Item -LiteralPath $ProtectedRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'protected deployment root is a reparse point'
+    }
+    $AllowedProtectedPaths = @(
+        $ProtectedRoot,$BridgeDirectory,$WorkerDestination,$WrapperDestination,$ConfigDestination,
+        $RuntimeDirectory,$NodeDestination,$KeyDirectory,$AuthorizedKeys
+    ) | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
+    $UnexpectedProtectedEntries = @(
+        Get-ChildItem -LiteralPath $ProtectedRoot -Recurse -Force |
+        Where-Object { ([IO.Path]::GetFullPath($_.FullName).TrimEnd('\')) -notin $AllowedProtectedPaths }
+    )
+    if ($UnexpectedProtectedEntries.Count -ne 0) { throw 'protected deployment root contains unmanaged entries' }
+    if (@(Get-ChildItem -LiteralPath $ProtectedRoot -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count -ne 0) {
+        throw 'protected deployment root contains a reparse point'
+    }
+    foreach ($ExistingProtectedPath in $AllowedProtectedPaths) {
+        if (Test-Path -LiteralPath $ExistingProtectedPath) {
+            Assert-ProtectedPathIntegrity $ExistingProtectedPath $ProtectedRoot
+        }
+    }
+    if (Test-Path -LiteralPath $NodeDestination -PathType Leaf) { Assert-Hash $NodeDestination $ExpectedNodeHash }
 }
 $CandidateStateBefore = Get-CandidateState
-$KeyLines = @(Get-Content -LiteralPath $PublicKey | Where-Object { $_.Trim() })
-if ($KeyLines.Count -ne 1 -or $KeyLines[0] -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: .*)?$') {
-    throw 'deployment public key must contain exactly one Ed25519 public key'
+$PublicKeyBytes = [IO.File]::ReadAllBytes($PublicKey)
+$PublicKeyDigest = [Security.Cryptography.SHA256]::Create()
+try {
+    $PublicKeyBytesHash = ([BitConverter]::ToString($PublicKeyDigest.ComputeHash($PublicKeyBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $PublicKeyDigest.Dispose()
 }
+if ($PublicKeyBytesHash -ne $ExpectedPublicKeyHash) { throw "deployment public-key bytes changed after preflight: $PublicKeyBytesHash" }
+try { $PublicKeyText = [Text.UTF8Encoding]::new($false, $true).GetString($PublicKeyBytes) } catch { throw 'deployment public key is not valid UTF-8' }
+$KeyLines = @($PublicKeyText -split '\r?\n' | Where-Object { $_.Trim() })
+if ($KeyLines.Count -ne 1) { throw 'deployment public key must contain exactly one non-empty line' }
+Assert-Ed25519PublicKeyLine $KeyLines[0]
 $BlockBegin = '# BEGIN SkyrimToolBridge project-deploy-v1'
 $BlockEnd = '# END SkyrimToolBridge project-deploy-v1'
 $ManagedLines = @(
@@ -244,7 +415,7 @@ $ManagedLines = @(
     '    PasswordAuthentication no',
     '    KbdInteractiveAuthentication no',
     '    PermitEmptyPasswords no',
-    '    AuthorizedKeysFile C:/ProgramData/SkyrimToolBridge/openssh/authorized_keys',
+    '    AuthorizedKeysFile "C:/Program Files/SkyrimDeployBridge/openssh/authorized_keys"',
     "    ForceCommand $ForceCommand",
     '    DisableForwarding yes',
     '    AllowTcpForwarding no',
@@ -348,10 +519,16 @@ for ($Index = 0; $Index -lt $ManagedPaths.Count; $Index++) {
         PriorHash = $PriorHash
     }
 }
-$KeyDirectoryExisted = Test-Path -LiteralPath $KeyDirectory -PathType Container
-$KeyDirectorySddl = if ($KeyDirectoryExisted) { (Get-Acl -LiteralPath $KeyDirectory).Sddl } else { $null }
-$RuntimeDirectoryExisted = Test-Path -LiteralPath $RuntimeDirectory -PathType Container
-$RuntimeDirectorySddl = if ($RuntimeDirectoryExisted) { (Get-Acl -LiteralPath $RuntimeDirectory).Sddl } else { $null }
+$ManagedDirectories = @($ProtectedRoot,$BridgeDirectory,$RuntimeDirectory,$KeyDirectory)
+$DirectoryState = @()
+foreach ($ManagedDirectory in $ManagedDirectories) {
+    $Exists = Test-Path -LiteralPath $ManagedDirectory -PathType Container
+    $DirectoryState += [pscustomobject]@{
+        Path = $ManagedDirectory
+        Existed = $Exists
+        Sddl = if ($Exists) { (Get-Acl -LiteralPath $ManagedDirectory).Sddl } else { $null }
+    }
+}
 Copy-Item -LiteralPath $SshConfig -Destination $ConfigBackup
 $OriginalHash = (Get-FileHash -LiteralPath $ConfigBackup -Algorithm SHA256).Hash
 $OriginalConfigSddl = (Get-Acl -LiteralPath $SshConfig).Sddl
@@ -373,35 +550,45 @@ $InstalledConfigHash = $null
 
 Write-Host '=== Install protected runtime, key, and validated sshd config ==='
 try {
+    New-Item -ItemType Directory -Path $ProtectedRoot -Force | Out-Null
+    Set-ProtectedDirectoryAcl $ProtectedRoot
+    New-Item -ItemType Directory -Path $BridgeDirectory -Force | Out-Null
     New-Item -ItemType Directory -Path $RuntimeDirectory -Force | Out-Null
-    Set-ProtectedRuntimeDirectoryAcl $RuntimeDirectory
-    Copy-Item -LiteralPath $NodeRuntime -Destination $NodeDestination -Force
-    Set-ProtectedFileAcl $NodeDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
-    Assert-Hash $NodeDestination $ExpectedNodeHash
-    foreach ($RuntimePath in @($ToolkitRoot,$Stage,$RuntimeDirectory,$NodeDestination)) {
-        Assert-NoBroadWriteAcl $RuntimePath
-    }
+    New-Item -ItemType Directory -Path $KeyDirectory -Force | Out-Null
+    Set-ProtectedDirectoryAcl $BridgeDirectory
+    Set-ProtectedDirectoryAcl $RuntimeDirectory
+    Set-KeyDirectoryAcl $KeyDirectory
 
+    Copy-Item -LiteralPath $NodeRuntime -Destination $NodeDestination -Force
     Copy-Item -LiteralPath $Worker -Destination $WorkerDestination -Force
     Copy-Item -LiteralPath $Wrapper -Destination $WrapperDestination -Force
     Copy-Item -LiteralPath $Config -Destination $ConfigDestination -Force
-    New-Item -ItemType Directory -Path $KeyDirectory -Force | Out-Null
-    Set-KeyDirectoryAcl $KeyDirectory
+    Set-ProtectedFileAcl $NodeDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    Assert-Hash $NodeDestination $ExpectedNodeHash
+    $NodeHash = $ExpectedNodeHash
     [IO.File]::WriteAllText($AuthorizedKeys, $RestrictedKey + "`n", [Text.UTF8Encoding]::new($false))
-    Set-ProtectedFileAcl $WorkerDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    Set-ProtectedFileAcl $WorkerDestination ([System.Security.AccessControl.FileSystemRights]::Read)
     Set-ProtectedFileAcl $WrapperDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
-    Set-ProtectedFileAcl $ConfigDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    Set-ProtectedFileAcl $ConfigDestination ([System.Security.AccessControl.FileSystemRights]::Read)
     Set-KeyFileAcl $AuthorizedKeys
     Assert-Hash $WorkerDestination $ExpectedWorkerHash
     Assert-Hash $WrapperDestination $ExpectedWrapperHash
     Assert-Hash $ConfigDestination $ExpectedConfigHash
+    foreach ($TrustedPath in @(
+        $ProtectedRoot,$BridgeDirectory,$WorkerDestination,$WrapperDestination,$ConfigDestination,
+        $RuntimeDirectory,$NodeDestination,$KeyDirectory,$AuthorizedKeys
+    )) {
+        Assert-ProtectedPathIntegrity $TrustedPath $ProtectedRoot
+    }
+    Assert-ProtectedPathIntegrity $SshConfig $SshDirectory
+    Assert-ProtectedPathIntegrity $Sshd 'C:\Windows'
+    Assert-ProtectedPathIntegrity $PowerShell 'C:\Windows'
     $NodeVersion = (& $NodeDestination '--version' 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $NodeVersion -cne $ExpectedNodeVersion) {
         throw "protected Node runtime version mismatch: expected=$ExpectedNodeVersion actual=$NodeVersion"
     }
     & $NodeDestination '--check' $WorkerDestination
     if ($LASTEXITCODE -ne 0) { throw 'protected Node runtime JavaScript syntax check failed' }
-    $NodeHash = (Get-FileHash -LiteralPath $NodeDestination -Algorithm SHA256).Hash.ToLowerInvariant()
     if ((Get-Content -LiteralPath $AuthorizedKeys -Raw) -ne ($RestrictedKey + "`n")) {
         throw 'installed restricted authorized key content mismatch'
     }
@@ -456,32 +643,51 @@ try {
                 }
             }
             if ($State.Existed) {
+                if (-not (Test-Path -LiteralPath $State.Path -PathType Leaf)) {
+                    throw "managed file was removed outside this provisioning transaction: $($State.Path)"
+                }
                 Copy-Item -LiteralPath $State.Backup -Destination $State.Path -Force
                 $Acl = Get-Acl -LiteralPath $State.Path
                 $Acl.SetSecurityDescriptorSddlForm($State.Sddl)
                 Set-Acl -LiteralPath $State.Path -AclObject $Acl
-            } else {
-                Remove-Item -LiteralPath $State.Path -Force -ErrorAction SilentlyContinue
+            } elseif (Test-Path -LiteralPath $State.Path) {
+                Remove-Item -LiteralPath $State.Path -Force -ErrorAction Stop
             }
         } catch { $RollbackErrors += "restore $($State.Path): $($_.Exception.Message)" }
     }
-    if (-not $RuntimeDirectoryExisted) {
-        try { Remove-Item -LiteralPath $RuntimeDirectory -Force -ErrorAction Stop } catch { $RollbackErrors += "remove runtime directory: $($_.Exception.Message)" }
-    } elseif ($RuntimeDirectorySddl) {
+    for ($Index = $DirectoryState.Count - 1; $Index -ge 0; $Index--) {
+        $State = $DirectoryState[$Index]
         try {
-            $Acl = Get-Acl -LiteralPath $RuntimeDirectory
-            $Acl.SetSecurityDescriptorSddlForm($RuntimeDirectorySddl)
-            Set-Acl -LiteralPath $RuntimeDirectory -AclObject $Acl
-        } catch { $RollbackErrors += "restore runtime directory ACL: $($_.Exception.Message)" }
+            if ($State.Existed) {
+                $Acl = Get-Acl -LiteralPath $State.Path
+                $Acl.SetSecurityDescriptorSddlForm($State.Sddl)
+                Set-Acl -LiteralPath $State.Path -AclObject $Acl
+            } elseif (Test-Path -LiteralPath $State.Path -PathType Container) {
+                Remove-Item -LiteralPath $State.Path -Force -ErrorAction Stop
+            }
+        } catch { $RollbackErrors += "restore directory $($State.Path): $($_.Exception.Message)" }
     }
-    if (-not $KeyDirectoryExisted) {
-        try { Remove-Item -LiteralPath $KeyDirectory -Force -ErrorAction Stop } catch { $RollbackErrors += "remove key directory: $($_.Exception.Message)" }
-    } elseif ($KeyDirectorySddl) {
+    foreach ($State in $ManagedState) {
         try {
-            $Acl = Get-Acl -LiteralPath $KeyDirectory
-            $Acl.SetSecurityDescriptorSddlForm($KeyDirectorySddl)
-            Set-Acl -LiteralPath $KeyDirectory -AclObject $Acl
-        } catch { $RollbackErrors += "restore key directory ACL: $($_.Exception.Message)" }
+            if ($State.Existed) {
+                if (-not (Test-Path -LiteralPath $State.Path -PathType Leaf)) { throw 'restored file is absent or has the wrong type' }
+                $RestoredHash = (Get-FileHash -LiteralPath $State.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($RestoredHash -ne $State.PriorHash) { throw "restored file hash mismatch: $RestoredHash" }
+                if ((Get-Acl -LiteralPath $State.Path).Sddl -cne $State.Sddl) { throw 'restored file ACL mismatch' }
+            } elseif (Test-Path -LiteralPath $State.Path) {
+                throw 'new managed file remains after rollback'
+            }
+        } catch { $RollbackErrors += "verify restored $($State.Path): $($_.Exception.Message)" }
+    }
+    foreach ($State in $DirectoryState) {
+        try {
+            if ($State.Existed) {
+                if (-not (Test-Path -LiteralPath $State.Path -PathType Container)) { throw 'restored directory is absent or has the wrong type' }
+                if ((Get-Acl -LiteralPath $State.Path).Sddl -cne $State.Sddl) { throw 'restored directory ACL mismatch' }
+            } elseif (Test-Path -LiteralPath $State.Path) {
+                throw 'new managed directory remains after rollback'
+            }
+        } catch { $RollbackErrors += "verify restored directory $($State.Path): $($_.Exception.Message)" }
     }
     try {
         Start-Service sshd -ErrorAction Stop
@@ -501,7 +707,11 @@ try {
     }
     throw "provisioning failed and all managed state was restored: $($Failure.Exception.Message)"
 } finally {
-    Remove-Item -LiteralPath $Candidate -Force -ErrorAction SilentlyContinue
+    try {
+        if (Test-Path -LiteralPath $Candidate) { Remove-Item -LiteralPath $Candidate -Force -ErrorAction Stop }
+    } catch {
+        Write-Warning "candidate cleanup failed and requires Administrator removal: $Candidate error=$($_.Exception.Message)"
+    }
 }
 
 $InstalledHash = (Get-FileHash -LiteralPath $SshConfig -Algorithm SHA256).Hash

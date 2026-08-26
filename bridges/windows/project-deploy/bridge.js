@@ -5,13 +5,13 @@ const fs = require('fs');
 const path = require('path');
 
 const CONFIG_PATH =
-  'C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\config.json';
+  'C:\\Program Files\\SkyrimDeployBridge\\config.json';
 const WORKER_PATH =
-  'C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\bridge\\bridge.js';
+  'C:\\Program Files\\SkyrimDeployBridge\\bridge\\bridge.js';
 const WRAPPER_PATH =
-  'C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\invoke-ssh.ps1';
+  'C:\\Program Files\\SkyrimDeployBridge\\invoke-ssh.ps1';
 const AUTHORIZED_KEYS_PATH =
-  'C:\\ProgramData\\SkyrimToolBridge\\openssh\\authorized_keys';
+  'C:\\Program Files\\SkyrimDeployBridge\\openssh\\authorized_keys';
 const EXPECTED_SID = 'S-1-5-21-3046562540-2879210194-691397096-1014';
 const MAX_REQUEST_BYTES = 180 * 1024 * 1024;
 const MAX_CONTENT_BYTES = 128 * 1024 * 1024;
@@ -326,6 +326,9 @@ async function applyDeploymentUnlocked(input, requestId) {
             }
           } else {
             await fs.promises.rm(entry.item.destination, { force: true });
+            if (await currentHash(entry.item.destination) !== null) {
+              throw new Error(`rollback failed to remove new destination: ${entry.item.destination}`);
+            }
           }
         }
       } catch (rollbackError) {
@@ -333,7 +336,11 @@ async function applyDeploymentUnlocked(input, requestId) {
       }
     }
     if (rollbackErrors.length === 0) {
-      await fs.promises.rm(backupDir, { recursive: true, force: true });
+      try {
+        await fs.promises.rm(backupDir, { recursive: true, force: true });
+      } catch (rollbackError) {
+        rollbackErrors.push(`remove rollback backup directory: ${String(rollbackError?.message ?? rollbackError)}`);
+      }
     }
     error.rollback = {
       attempted: rollbackAttempted,
@@ -463,11 +470,13 @@ async function applyDeployment(input, requestId) {
     }
     throw error;
   } finally {
+    const releasePath = `${lockPath}.release-${crypto.randomUUID()}`;
     try {
-      await lock.close();
+      await fs.promises.rename(lockPath, releasePath);
     } finally {
-      await fs.promises.rm(lockPath, { force: true });
+      await lock.close();
     }
+    await fs.promises.rm(releasePath, { force: true });
   }
 }
 
@@ -527,8 +536,9 @@ async function snapshotRegisteredBackups(config, target) {
 }
 
 function sameSnapshot(before, after) {
-  return JSON.stringify(before, Object.keys(before).sort()) ===
-    JSON.stringify(after, Object.keys(after).sort());
+  const canonicalEntries = value => Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify(canonicalEntries(before)) === JSON.stringify(canonicalEntries(after));
 }
 
 async function smoke(config) {
@@ -752,6 +762,7 @@ if (require.main === module) {
 module.exports = {
   normalizeRelative,
   samePath,
+  sameSnapshot,
   beneath,
   validateArtifactRequest,
   dispatch,

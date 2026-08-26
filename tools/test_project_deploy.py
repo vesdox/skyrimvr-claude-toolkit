@@ -101,7 +101,29 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertIn("$ErrorActionPreference = $SavedErrorActionPreference", provision)
         self.assertNotIn(r"D:\Program Files\nodejs\node.exe", provision)
         self.assertIn("Assert-Hash $NodeRuntime $ExpectedNodeHash", provision)
-        self.assertIn("Set-ProtectedRuntimeDirectoryAcl $RuntimeDirectory", provision)
+        self.assertIn("Set-ProtectedDirectoryAcl $ProtectedRoot", provision)
+        self.assertIn("Set-ProtectedDirectoryAcl $RuntimeDirectory", provision)
+        self.assertIn("Assert-NoBroadMutationAcl", provision)
+        self.assertIn("Assert-NoBroadAncestorReplacementAcl", provision)
+        self.assertIn("Assert-ProtectedPathIntegrity $SshConfig $SshDirectory", provision)
+        self.assertIn("Assert-ProtectedPathIntegrity $PowerShell 'C:\\Windows'", provision)
+        self.assertIn("C:/Program Files/SkyrimDeployBridge/openssh/authorized_keys", provision)
+        self.assertIn("-EncodedCommand $ForceCommandEncoded", provision)
+        self.assertNotIn("C:/ProgramData/SkyrimToolBridge/project-deploy/invoke-ssh.ps1", provision)
+        self.assertIn("$ManagedDirectories = @($ProtectedRoot,$BridgeDirectory,$RuntimeDirectory,$KeyDirectory)", provision)
+        self.assertIn("for ($Index = $DirectoryState.Count - 1; $Index -ge 0; $Index--)", provision)
+        wrapper = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" / "invoke-ssh.ps1"
+        ).read_text()
+        self.assertIn(r"C:\Program Files\SkyrimDeployBridge\runtime\node.exe", wrapper)
+        self.assertNotIn(r"C:\ProgramData\SkyrimToolBridge\project-deploy\runtime", wrapper)
+        bridge = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" / "bridge.js"
+        ).read_text()
+        self.assertIn("rollback failed to remove new destination", bridge)
+        self.assertIn("remove rollback backup directory", bridge)
+        self.assertIn(".release-${crypto.randomUUID()}", bridge)
+        self.assertNotIn(r"C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\config.json", bridge)
         self.assertLess(
             provision.index("Assert-Hash $NodeRuntime $ExpectedNodeHash"),
             provision.index("$NodeVersion = (& $NodeDestination '--version'"),

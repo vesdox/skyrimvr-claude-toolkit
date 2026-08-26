@@ -6,6 +6,7 @@ const path = require('node:path');
 const {
   normalizeRelative,
   samePath,
+  sameSnapshot,
   beneath,
   validateArtifactRequest,
   readFrame,
@@ -23,6 +24,13 @@ test('Windows path comparison is case insensitive and bounded', () => {
   assert.equal(samePath('SKSE\\Plugins\\Hoarfrost.dll', 'skse/plugins/Hoarfrost.dll'), true);
   assert.equal(beneath('D:\\mods\\Hoarfrost', 'D:\\mods\\Hoarfrost\\SKSE\\x.dll'), true);
   assert.equal(beneath('D:\\mods\\Hoarfrost', 'D:\\mods\\Other\\x.dll'), false);
+});
+
+test('snapshot comparison detects additions, removals, and hash changes', () => {
+  assert.equal(sameSnapshot({ b: '2', a: '1' }, { a: '1', b: '2' }), true);
+  assert.equal(sameSnapshot({ a: '1' }, { a: '1', b: '2' }), false);
+  assert.equal(sameSnapshot({ a: '1', b: '2' }, { a: '1' }), false);
+  assert.equal(sameSnapshot({ a: '1' }, { a: '2' }), false);
 });
 
 test('forced-command frames round-trip structured JSON', () => {
