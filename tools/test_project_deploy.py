@@ -79,6 +79,10 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertIn("& $Sshd '-t' '-f' $SshConfig", provision)
         self.assertIn("& $Sshd '-t' '-f' $Candidate", provision)
         self.assertIn("candidate does not contain exactly the canonical managed SkyrimDeploy block", provision)
+        self.assertIn("$SavedErrorActionPreference = $ErrorActionPreference", provision)
+        self.assertIn("$ErrorActionPreference = 'Continue'", provision)
+        self.assertIn("$SshVersionExit = $LASTEXITCODE", provision)
+        self.assertIn("$ErrorActionPreference = $SavedErrorActionPreference", provision)
 
     def test_dry_run_never_starts_ssh(self):
         with tempfile.TemporaryDirectory() as directory:

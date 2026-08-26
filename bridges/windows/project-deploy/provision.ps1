@@ -160,7 +160,16 @@ if ($SshService.StartName -notmatch '^(?i:LocalSystem|NT AUTHORITY\\SYSTEM)$') {
     throw "sshd is not running as LocalSystem: $($SshService.StartName)"
 }
 if ($SshService.PathName -notmatch [regex]::Escape($Sshd)) { throw "sshd service does not use pinned binary: $($SshService.PathName)" }
-$SshVersion = (& $Sshd '-V' 2>&1 | Out-String).Trim()
+$SavedErrorActionPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $SshVersionOutput = @(& $Sshd '-V' 2>&1)
+    $SshVersionExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $SavedErrorActionPreference
+}
+if ($SshVersionExit -ne 0) { throw "sshd -V failed with exit code $SshVersionExit" }
+$SshVersion = ($SshVersionOutput | ForEach-Object { [string]$_ } | Out-String).Trim()
 if ($SshVersion -notmatch '(?i)OpenSSH_for_Windows_9\.5p2\b') { throw "expected OpenSSH_for_Windows_9.5p2: $SshVersion" }
 foreach ($Path in @($Worker,$Wrapper,$Config,$PublicKey,$SshConfig,$Sshd,$Node,$Stage,$BridgeDirectory,$BackupRoot)) {
     if (-not (Test-Path -LiteralPath $Path)) { throw "required path is absent: $Path" }
