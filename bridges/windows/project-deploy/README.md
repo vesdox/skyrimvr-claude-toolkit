@@ -133,6 +133,24 @@ validates the installed scripts, and restores the exact old pair on failure. It 
 not rerun provisioning, restart sshd, edit `sshd_config`, alter identities/keys/ACLs,
 or touch any deployment target.
 
+## Completed live SSH smoke
+
+The owner-run live smoke passed on 2026-08-26 against toolkit commit
+`40024575b1c93eb49cfdd9df44b20daacf5be14e`. Health request
+`afb202b1-9585-49ed-a690-2fe97e8df60b` and smoke request
+`5526670f-30dd-41ee-9d64-15d9dedc7d4c` each returned a read-back-verified audit
+record for the pinned SID. The smoke proved target write/backup/replace/rollback/
+remove, refusal across 324 unrelated mod roots, protected Node/worker/wrapper/config/
+authorized-key write refusal, and unchanged registered destinations/backups with its
+probe and smoke backup removed.
+
+The same run refused wrong deployment keys, arbitrary command, empty shell, PTY,
+SFTP, local/remote/dynamic/stdio forwarding, while preserving constrained
+`HoarfrostTransfer` SFTP and `HoarfrostBuild` authentication. No registered artifact
+was sent or deployed. The capability is available only for its registered bounded
+operations; this proof does not authorize load-order, save, launch, or runtime
+configuration mutation.
+
 ## Client behavior
 
 Dry-run never writes: it verifies source/build provenance and reads registered

@@ -1,7 +1,7 @@
 id = "project-deploy"
 name = "Bounded project deployment"
 
-status = "unconfigured"
+status = "available"
 execution = "windows"
 risk = "environment-write"
 

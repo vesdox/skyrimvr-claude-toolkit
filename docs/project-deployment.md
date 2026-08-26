@@ -48,5 +48,10 @@ Skyrim, modify saves, or change game/runtime configuration. Those operations are
 implied by deployment authorization; load-order mutation would require a separate
 future capability.
 
+The ASSOS forced-command transport completed its owner-run live SSH smoke on
+2026-08-26 against toolkit commit `40024575b1c93eb49cfdd9df44b20daacf5be14e`.
+That proof made the registered `project-deploy` capability available; it did not
+perform or authorize any candidate deployment.
+
 See `bridges/windows/project-deploy/README.md` for the Windows trust boundary and
 registry-derived allowlist.
