@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 import project_deploy as deploy
+import smoke_project_deploy_ssh as smoke
 
 
 class ProjectDeployTests(unittest.TestCase):
@@ -200,6 +201,32 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertIn("durable audit record could not be read back exactly once", bridge)
         self.assertIn('require_audit_proof(health, "health")', smoke)
         self.assertIn('require_audit_proof(smoke, "smoke")', smoke)
+
+    def test_audit_identity_uses_pinned_sid_and_case_insensitive_account_name(self):
+        response = {
+            "request_id": "520ea820-7caa-4069-acad-801940fcf28d",
+            "audit": {
+                "verified": True,
+                "request_id": "520ea820-7caa-4069-acad-801940fcf28d",
+                "operation": "health",
+                "event": "health",
+                "identity": "WORKGROUP\\skyrimdeploy",
+                "sid": smoke.EXPECTED_SID,
+                "ssh_connection": "100.97.12.82 41632 100.113.242.33 22",
+                "ok": True,
+                "record_sha256": "a" * 64,
+            },
+        }
+        smoke.require_audit_proof(response, "health")
+        response["audit"]["identity"] = "ELLFONE\\SkyrimDeploy"
+        smoke.require_audit_proof(response, "health")
+        response["audit"]["identity"] = "WORKGROUP\\OtherAccount"
+        with self.assertRaises(deploy.DeployError):
+            smoke.require_audit_proof(response, "health")
+        response["audit"]["identity"] = "WORKGROUP\\skyrimdeploy"
+        response["audit"]["sid"] = "S-1-5-21-incorrect"
+        with self.assertRaises(deploy.DeployError):
+            smoke.require_audit_proof(response, "health")
 
     def test_bounded_worker_update_pins_exact_old_and_new_pairs(self):
         root = deploy.ROOT / "bridges" / "windows" / "project-deploy"

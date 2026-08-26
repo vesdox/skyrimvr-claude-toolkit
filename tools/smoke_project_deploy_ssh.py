@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TRANSFER_IDENTITY = Path.home() / ".ssh" / "hoarfrost_transfer"
 BUILD_IDENTITY = Path.home() / ".ssh" / "hoarfrost_build"
 EXPECTED_SID = "S-1-5-21-3046562540-2879210194-691397096-1014"
-EXPECTED_IDENTITY = "ELLFONE\\SkyrimDeploy"
+EXPECTED_ACCOUNT_NAME = "skyrimdeploy"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -28,12 +28,18 @@ def require_audit_proof(response: dict, operation: str) -> None:
         "request_id": response.get("request_id"),
         "operation": operation,
         "event": operation,
-        "identity": EXPECTED_IDENTITY,
         "sid": EXPECTED_SID,
         "ok": True,
     }
     if not isinstance(proof, dict) or any(proof.get(key) != value for key, value in expected.items()):
         raise deploy.DeployError(f"{operation} response has no correlated audit proof: {proof}")
+    identity = proof.get("identity")
+    if (
+        not isinstance(identity, str)
+        or "\\" not in identity
+        or identity.rsplit("\\", 1)[1].casefold() != EXPECTED_ACCOUNT_NAME
+    ):
+        raise deploy.DeployError(f"{operation} audit proof has an unexpected account identity: {identity!r}")
     if not isinstance(proof.get("ssh_connection"), str) or not proof["ssh_connection"].strip():
         raise deploy.DeployError(f"{operation} audit proof has no SSH connection correlation")
     if not isinstance(proof.get("record_sha256"), str) or not SHA256_RE.fullmatch(proof["record_sha256"]):
@@ -45,7 +51,7 @@ def run_refusal(label: str, argv: list[str], input_bytes: bytes = b"", timeout: 
     if result.returncode == 0:
         raise deploy.DeployError(f"{label} unexpectedly succeeded")
     stdout = result.stdout.decode("utf-8", errors="replace")
-    if "ELLFONE\\SkyrimDeploy" in stdout or "Microsoft Windows" in stdout:
+    if "\\skyrimdeploy" in stdout.casefold() or "Microsoft Windows" in stdout:
         raise deploy.DeployError(f"{label} exposed command output: {stdout[:500]}")
     print(f"{label}: refused (status {result.returncode})")
 

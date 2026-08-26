@@ -8,7 +8,10 @@ user RC files, tunneling, and all forwarding.
 
 The wrapper accepts only the literal SSH original command `project-deploy-v1`, verifies
 its own protected worker/config hashes and exact Windows SID, refuses requests while
-Skyrim is running, and launches `bridge.js --stdio`. The worker requires pinned protocol magic and
+Skyrim is running, and launches `bridge.js --stdio`. Runtime identity acceptance is pinned to the exact
+Windows SID; the case-insensitive `SkyrimDeploy` account component is also checked,
+while the environment-reported domain/workgroup label is audit metadata rather than
+an identity authority. The worker requires pinned protocol magic and
 length-prefixed JSON frames, reads at most two requests, and reserves stdout solely
 for framed protocol responses. OpenSSH terminates an idle session after 600 seconds;
 a dead apply lock becomes recoverable only after 15 minutes and a dead-PID check:
