@@ -54,6 +54,7 @@ paths are registered in `projects/hoarfrost.toml`.
 ## Protected runtime layout
 
 - worker: `C:\ProgramData\SkyrimToolBridge\project-deploy\bridge\bridge.js`
+- Node runtime: `C:\ProgramData\SkyrimToolBridge\project-deploy\runtime\node.exe`
 - wrapper: `C:\ProgramData\SkyrimToolBridge\project-deploy\invoke-ssh.ps1`
 - allowlist: `C:\ProgramData\SkyrimToolBridge\project-deploy\config.json`
 - backups/audit: registry-configured protected backup root
@@ -78,7 +79,7 @@ or ambiguous `SkyrimDeploy` blocks, does not create an account, and does not alt
 ASSOS ACLs. Before changing the live service it:
 
 1. verifies source hashes, non-administrator account SID, absent task/listener,
-   protected parent/runtime ACLs, and a pinned-path Node.js 20+ runtime;
+   protected parent/runtime ACLs, and the exact signed Node.js 24.15.0 runtime;
 2. preserves every pre-existing `sshd_config` byte while inserting exactly one
    canonical, structurally validated managed `SkyrimDeploy` Match block;
 3. runs `sshd.exe -t -f` against the baseline, candidate, installed, and restored
@@ -90,6 +91,13 @@ ASSOS ACLs. Before changing the live service it:
 6. backs up runtime files and `sshd_config`, installs exact ACLs, and restarts sshd;
 7. restores compare-and-swap-validated original state, waits for sshd transitions,
    and revalidates the restored port-22 service if activation/health checks fail.
+
+The packaged Node runtime is extracted from the official `node-v24.15.0-win-x64.zip`.
+The signed release checksum, archive hash, extracted executable hash, owner-observed
+Authenticode signer, and exact file version are recorded in
+`node-runtime-v24.15.0.json`. Provisioning verifies the staged hash, size, version
+resource, and signer before copying it, then verifies protected destination ancestry,
+hash, and ACLs before executing it.
 
 A remote smoke with the dedicated key is still required after local provisioning. It
 must prove dedicated-key-only protocol access, shell/SFTP/PTY/forwarding refusal,

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,6 +71,21 @@ class ProjectDeployTests(unittest.TestCase):
                 None,
             )
 
+    def test_pinned_node_runtime_provenance(self):
+        provenance_path = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" /
+            "node-runtime-v24.15.0.json"
+        )
+        provenance = json.loads(provenance_path.read_text())
+        self.assertEqual(provenance["version"], "24.15.0")
+        self.assertEqual(provenance["node_exe_size"], 91694408)
+        self.assertEqual(
+            provenance["node_exe_sha256"],
+            "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5",
+        )
+        self.assertTrue(provenance["verification"]["signed_archive_sha256_matches_download"])
+        self.assertTrue(provenance["verification"]["extracted_node_sha256_matches_owner_observation"])
+
     def test_provisioning_avoids_administrator_side_user_evaluation(self):
         provision = (
             deploy.ROOT / "bridges" / "windows" / "project-deploy" / "provision.ps1"
@@ -83,6 +99,13 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertIn("$ErrorActionPreference = 'Continue'", provision)
         self.assertIn("$SshVersionExit = $LASTEXITCODE", provision)
         self.assertIn("$ErrorActionPreference = $SavedErrorActionPreference", provision)
+        self.assertNotIn(r"D:\Program Files\nodejs\node.exe", provision)
+        self.assertIn("Assert-Hash $NodeRuntime $ExpectedNodeHash", provision)
+        self.assertIn("Set-ProtectedRuntimeDirectoryAcl $RuntimeDirectory", provision)
+        self.assertLess(
+            provision.index("Assert-Hash $NodeRuntime $ExpectedNodeHash"),
+            provision.index("$NodeVersion = (& $NodeDestination '--version'"),
+        )
 
     def test_dry_run_never_starts_ssh(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Worker,
     [Parameter(Mandatory = $true)][string]$Wrapper,
     [Parameter(Mandatory = $true)][string]$Config,
-    [Parameter(Mandatory = $true)][string]$PublicKey
+    [Parameter(Mandatory = $true)][string]$PublicKey,
+    [Parameter(Mandatory = $true)][string]$NodeRuntime
 )
 
 Set-StrictMode -Version Latest
@@ -10,23 +11,29 @@ $ErrorActionPreference = 'Stop'
 
 $ExpectedSid = 'S-1-5-21-3046562540-2879210194-691397096-1014'
 $ExpectedWorkerHash = '99eabaafbd3e0b850ae0d3e8a891e4443d57dd2900a2423f5c9804a5e87e6442'
-$ExpectedWrapperHash = '64ab744b89a2eb124db80b2081f46212a5c277d57262f7803d1f14b13601297e'
+$ExpectedWrapperHash = '33289873434a13117fd004476c66016dd9d6e4ef187719067cbf8614ee38036a'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 $ExpectedPublicKeyHash = '91bd33e543bf43ef38683a630da7961e2a50a7060dec4e3a55fd79ac7c1bbb53'
+$ExpectedNodeHash = '3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5'
+$ExpectedNodeVersion = 'v24.15.0'
+$ExpectedNodeFileVersion = '24.15.0'
+$ExpectedNodeSignerThumbprint = '53EFB21DD2F03E171CFF88977C2B0B1E8DF7E2A2'
 $AccountName = 'SkyrimDeploy'
 $DeployAccount = "${env:COMPUTERNAME}\$AccountName"
-$Stage = 'C:\ProgramData\SkyrimToolBridge\project-deploy'
+$ToolkitRoot = 'C:\ProgramData\SkyrimToolBridge'
+$Stage = Join-Path $ToolkitRoot 'project-deploy'
 $BridgeDirectory = Join-Path $Stage 'bridge'
 $BackupRoot = Join-Path $Stage 'backups'
 $WorkerDestination = Join-Path $BridgeDirectory 'bridge.js'
 $WrapperDestination = Join-Path $Stage 'invoke-ssh.ps1'
 $ConfigDestination = Join-Path $Stage 'config.json'
+$RuntimeDirectory = Join-Path $Stage 'runtime'
+$NodeDestination = Join-Path $RuntimeDirectory 'node.exe'
 $SshDirectory = 'C:\ProgramData\ssh'
 $SshConfig = Join-Path $SshDirectory 'sshd_config'
 $KeyDirectory = 'C:\ProgramData\SkyrimToolBridge\openssh'
 $AuthorizedKeys = Join-Path $KeyDirectory 'authorized_keys'
 $Sshd = 'C:\Windows\System32\OpenSSH\sshd.exe'
-$Node = 'D:\Program Files\nodejs\node.exe'
 $TaskName = 'SkyrimToolBridge-Project-Deploy'
 $CandidateDll = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development\SKSE\Plugins\Hoarfrost.dll'
 $CandidatePdb = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development\SKSE\Plugins\Hoarfrost.pdb'
@@ -121,10 +128,29 @@ function Set-KeyDirectoryAcl {
     Set-Acl -LiteralPath $Path -AclObject $Acl
 }
 
+function Set-ProtectedRuntimeDirectoryAcl {
+    param([string]$Path)
+    $Acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $Acl.SetAccessRuleProtection($true, $false)
+    $Acl.SetOwner([Security.Principal.NTAccount]::new('BUILTIN\Administrators'))
+    $Inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    Add-AllowRule $Acl 'BUILTIN\Administrators' ([System.Security.AccessControl.FileSystemRights]::FullControl) $Inheritance
+    Add-AllowRule $Acl 'NT AUTHORITY\SYSTEM' ([System.Security.AccessControl.FileSystemRights]::FullControl) $Inheritance
+    Add-AllowRule $Acl $DeployAccount ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute) $Inheritance
+    Set-Acl -LiteralPath $Path -AclObject $Acl
+}
+
 function Assert-NoBroadWriteAcl {
     param([string]$Path)
     $Dangerous = [System.Security.AccessControl.FileSystemRights]'WriteData, AppendData, CreateFiles, CreateDirectories, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership, WriteAttributes, WriteExtendedAttributes'
-    $BroadSids = @($ExpectedSid, 'S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
+    $BroadSids = @(
+        $ExpectedSid,
+        (Get-LocalUser -Name 'HoarfrostTransfer' -ErrorAction Stop).SID.Value,
+        (Get-LocalUser -Name 'HoarfrostBuild' -ErrorAction Stop).SID.Value,
+        'S-1-1-0',
+        'S-1-5-11',
+        'S-1-5-32-545'
+    )
     $Acl = Get-Acl -LiteralPath $Path
     $OwnerSid = $Acl.Owner
     try { $OwnerSid = ([Security.Principal.NTAccount]$Acl.Owner).Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
@@ -171,23 +197,37 @@ try {
 if ($SshVersionExit -ne 0) { throw "sshd -V failed with exit code $SshVersionExit" }
 $SshVersion = ($SshVersionOutput | ForEach-Object { [string]$_ } | Out-String).Trim()
 if ($SshVersion -notmatch '(?i)OpenSSH_for_Windows_9\.5p2\b') { throw "expected OpenSSH_for_Windows_9.5p2: $SshVersion" }
-foreach ($Path in @($Worker,$Wrapper,$Config,$PublicKey,$SshConfig,$Sshd,$Node,$Stage,$BridgeDirectory,$BackupRoot)) {
+foreach ($Path in @($Worker,$Wrapper,$Config,$PublicKey,$NodeRuntime,$SshConfig,$Sshd,$ToolkitRoot,$Stage,$BridgeDirectory,$BackupRoot)) {
     if (-not (Test-Path -LiteralPath $Path)) { throw "required path is absent: $Path" }
 }
 Assert-Hash $Worker $ExpectedWorkerHash
 Assert-Hash $Wrapper $ExpectedWrapperHash
 Assert-Hash $Config $ExpectedConfigHash
 Assert-Hash $PublicKey $ExpectedPublicKeyHash
-$NodeVersion = (& $Node '--version' 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or $NodeVersion -notmatch '^v(?:2[0-9]|[3-9][0-9]|[1-9][0-9]{2,})\.[0-9]+\.[0-9]+$') {
-    throw "expected a pinned-path Node.js 20+ runtime: $NodeVersion"
+Assert-Hash $NodeRuntime $ExpectedNodeHash
+if ((Get-Item -LiteralPath $NodeRuntime).Length -ne 91694408) { throw 'staged Node runtime length mismatch' }
+$NodeFileVersion = (Get-Item -LiteralPath $NodeRuntime).VersionInfo.FileVersion
+if ($NodeFileVersion -ne $ExpectedNodeFileVersion) {
+    throw "staged Node file version mismatch: expected=$ExpectedNodeFileVersion actual=$NodeFileVersion"
 }
-foreach ($RuntimePath in @($Node, (Split-Path -Parent $Node), (Split-Path -Parent (Split-Path -Parent $Node)), $Stage, $BridgeDirectory)) {
+$NodeSignature = Get-AuthenticodeSignature -LiteralPath $NodeRuntime
+$ActualNodeSignerThumbprint = if ($NodeSignature.SignerCertificate) { $NodeSignature.SignerCertificate.Thumbprint } else { $null }
+if ($NodeSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+    $ActualNodeSignerThumbprint -ine $ExpectedNodeSignerThumbprint) {
+    throw "staged Node Authenticode provenance mismatch: status=$($NodeSignature.Status) signer=$ActualNodeSignerThumbprint"
+}
+foreach ($RuntimePath in @($ToolkitRoot,$Stage,$BridgeDirectory)) {
     Assert-NoBroadWriteAcl $RuntimePath
 }
-$NodeHash = (Get-FileHash -LiteralPath $Node -Algorithm SHA256).Hash.ToLowerInvariant()
-& $Node '--check' $Worker
-if ($LASTEXITCODE -ne 0) { throw 'deployment worker JavaScript syntax check failed' }
+if (Test-Path -LiteralPath $RuntimeDirectory -PathType Container) {
+    $UnexpectedRuntimeEntries = @(Get-ChildItem -LiteralPath $RuntimeDirectory -Force | Where-Object { $_.FullName -ine $NodeDestination })
+    if ($UnexpectedRuntimeEntries.Count -ne 0) { throw 'protected runtime directory contains unmanaged entries' }
+    Assert-NoBroadWriteAcl $RuntimeDirectory
+    if (Test-Path -LiteralPath $NodeDestination -PathType Leaf) {
+        Assert-Hash $NodeDestination $ExpectedNodeHash
+        Assert-NoBroadWriteAcl $NodeDestination
+    }
+}
 $CandidateStateBefore = Get-CandidateState
 $KeyLines = @(Get-Content -LiteralPath $PublicKey | Where-Object { $_.Trim() })
 if ($KeyLines.Count -ne 1 -or $KeyLines[0] -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: .*)?$') {
@@ -287,7 +327,7 @@ Write-Host 'Candidate syntax, byte preservation, and exact managed-block validat
 Write-Host '=== Snapshot rollback state ==='
 $RuntimeBackup = Join-Path $BackupRoot "provisioning-$Stamp"
 New-Item -ItemType Directory -Path $RuntimeBackup -Force | Out-Null
-$ManagedPaths = @($WorkerDestination,$WrapperDestination,$ConfigDestination,$AuthorizedKeys)
+$ManagedPaths = @($WorkerDestination,$WrapperDestination,$ConfigDestination,$AuthorizedKeys,$NodeDestination)
 $ManagedState = @()
 for ($Index = 0; $Index -lt $ManagedPaths.Count; $Index++) {
     $ManagedPath = $ManagedPaths[$Index]
@@ -310,6 +350,8 @@ for ($Index = 0; $Index -lt $ManagedPaths.Count; $Index++) {
 }
 $KeyDirectoryExisted = Test-Path -LiteralPath $KeyDirectory -PathType Container
 $KeyDirectorySddl = if ($KeyDirectoryExisted) { (Get-Acl -LiteralPath $KeyDirectory).Sddl } else { $null }
+$RuntimeDirectoryExisted = Test-Path -LiteralPath $RuntimeDirectory -PathType Container
+$RuntimeDirectorySddl = if ($RuntimeDirectoryExisted) { (Get-Acl -LiteralPath $RuntimeDirectory).Sddl } else { $null }
 Copy-Item -LiteralPath $SshConfig -Destination $ConfigBackup
 $OriginalHash = (Get-FileHash -LiteralPath $ConfigBackup -Algorithm SHA256).Hash
 $OriginalConfigSddl = (Get-Acl -LiteralPath $SshConfig).Sddl
@@ -326,10 +368,20 @@ $ExpectedManagedHashes[$WorkerDestination] = $ExpectedWorkerHash
 $ExpectedManagedHashes[$WrapperDestination] = $ExpectedWrapperHash
 $ExpectedManagedHashes[$ConfigDestination] = $ExpectedConfigHash
 $ExpectedManagedHashes[$AuthorizedKeys] = $ExpectedAuthorizedKeyHash
+$ExpectedManagedHashes[$NodeDestination] = $ExpectedNodeHash
 $InstalledConfigHash = $null
 
 Write-Host '=== Install protected runtime, key, and validated sshd config ==='
 try {
+    New-Item -ItemType Directory -Path $RuntimeDirectory -Force | Out-Null
+    Set-ProtectedRuntimeDirectoryAcl $RuntimeDirectory
+    Copy-Item -LiteralPath $NodeRuntime -Destination $NodeDestination -Force
+    Set-ProtectedFileAcl $NodeDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    Assert-Hash $NodeDestination $ExpectedNodeHash
+    foreach ($RuntimePath in @($ToolkitRoot,$Stage,$RuntimeDirectory,$NodeDestination)) {
+        Assert-NoBroadWriteAcl $RuntimePath
+    }
+
     Copy-Item -LiteralPath $Worker -Destination $WorkerDestination -Force
     Copy-Item -LiteralPath $Wrapper -Destination $WrapperDestination -Force
     Copy-Item -LiteralPath $Config -Destination $ConfigDestination -Force
@@ -343,6 +395,13 @@ try {
     Assert-Hash $WorkerDestination $ExpectedWorkerHash
     Assert-Hash $WrapperDestination $ExpectedWrapperHash
     Assert-Hash $ConfigDestination $ExpectedConfigHash
+    $NodeVersion = (& $NodeDestination '--version' 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $NodeVersion -cne $ExpectedNodeVersion) {
+        throw "protected Node runtime version mismatch: expected=$ExpectedNodeVersion actual=$NodeVersion"
+    }
+    & $NodeDestination '--check' $WorkerDestination
+    if ($LASTEXITCODE -ne 0) { throw 'protected Node runtime JavaScript syntax check failed' }
+    $NodeHash = (Get-FileHash -LiteralPath $NodeDestination -Algorithm SHA256).Hash.ToLowerInvariant()
     if ((Get-Content -LiteralPath $AuthorizedKeys -Raw) -ne ($RestrictedKey + "`n")) {
         throw 'installed restricted authorized key content mismatch'
     }
@@ -405,6 +464,15 @@ try {
                 Remove-Item -LiteralPath $State.Path -Force -ErrorAction SilentlyContinue
             }
         } catch { $RollbackErrors += "restore $($State.Path): $($_.Exception.Message)" }
+    }
+    if (-not $RuntimeDirectoryExisted) {
+        try { Remove-Item -LiteralPath $RuntimeDirectory -Force -ErrorAction Stop } catch { $RollbackErrors += "remove runtime directory: $($_.Exception.Message)" }
+    } elseif ($RuntimeDirectorySddl) {
+        try {
+            $Acl = Get-Acl -LiteralPath $RuntimeDirectory
+            $Acl.SetSecurityDescriptorSddlForm($RuntimeDirectorySddl)
+            Set-Acl -LiteralPath $RuntimeDirectory -AclObject $Acl
+        } catch { $RollbackErrors += "restore runtime directory ACL: $($_.Exception.Message)" }
     }
     if (-not $KeyDirectoryExisted) {
         try { Remove-Item -LiteralPath $KeyDirectory -Force -ErrorAction Stop } catch { $RollbackErrors += "remove key directory: $($_.Exception.Message)" }

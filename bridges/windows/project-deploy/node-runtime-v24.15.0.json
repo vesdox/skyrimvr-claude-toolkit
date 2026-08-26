@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "product": "Node.js",
+  "version": "24.15.0",
+  "platform": "win-x64",
+  "release_url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip",
+  "release_archive_sha256": "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62",
+  "node_exe_path_in_archive": "node-v24.15.0-win-x64/node.exe",
+  "node_exe_size": 91694408,
+  "node_exe_sha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5",
+  "signed_checksums_url": "https://nodejs.org/dist/v24.15.0/SHASUMS256.txt.asc",
+  "signed_checksums_sha256": "3dfa8cae511787d13345e72de1b951176a06fa210fcb4ccb0eb96ce6b33b8d9e",
+  "release_key_fingerprint": "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+  "release_key_identity": "Antoine du Hamel <antoine.duhamel@platformatic.dev>",
+  "release_keyring_url": "https://github.com/nodejs/release-keys/raw/HEAD/gpg/pubring.kbx",
+  "release_keyring_sha256": "6030d4e0cd53330acf2ab68acd455b7ca98bb5d5975376f0b7c0892308ba2d57",
+  "verification": {
+    "gpgv_result": "Good signature",
+    "signed_archive_sha256_matches_download": true,
+    "extracted_node_sha256_matches_owner_observation": true,
+    "owner_authenticode_status": "Valid",
+    "owner_signer_subject": "CN=OpenJS Foundation, O=OpenJS Foundation, L=San Francisco, S=California, C=US",
+    "owner_signer_thumbprint": "53EFB21DD2F03E171CFF88977C2B0B1E8DF7E2A2",
+    "owner_file_version": "24.15.0"
+  }
+}
