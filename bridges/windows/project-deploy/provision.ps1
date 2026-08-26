@@ -9,8 +9,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ExpectedSid = 'S-1-5-21-3046562540-2879210194-691397096-1014'
-$ExpectedWorkerHash = 'ff0100ef0c1a57a27e1c35a3e12d995619f97e41ca690eabf2c9319b302f6742'
-$ExpectedWrapperHash = 'ce2837992e2e116abbca590cb27f7d00800945b6b53d7c1d7b69a0079c8e1107'
+$ExpectedWorkerHash = '99eabaafbd3e0b850ae0d3e8a891e4443d57dd2900a2423f5c9804a5e87e6442'
+$ExpectedWrapperHash = '64ab744b89a2eb124db80b2081f46212a5c277d57262f7803d1f14b13601297e'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 $ExpectedPublicKeyHash = '91bd33e543bf43ef38683a630da7961e2a50a7060dec4e3a55fd79ac7c1bbb53'
 $AccountName = 'SkyrimDeploy'
@@ -28,6 +28,8 @@ $AuthorizedKeys = Join-Path $KeyDirectory 'authorized_keys'
 $Sshd = 'C:\Windows\System32\OpenSSH\sshd.exe'
 $Node = 'D:\Program Files\nodejs\node.exe'
 $TaskName = 'SkyrimToolBridge-Project-Deploy'
+$CandidateDll = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development\SKSE\Plugins\Hoarfrost.dll'
+$CandidatePdb = 'D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Development\SKSE\Plugins\Hoarfrost.pdb'
 $ForceCommand = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:/ProgramData/SkyrimToolBridge/project-deploy/invoke-ssh.ps1'
 
 function Assert-Hash {
@@ -35,6 +37,37 @@ function Assert-Hash {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "required file is absent: $Path" }
     $Actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($Actual -ne $Expected) { throw "SHA256 mismatch for ${Path}: expected=$Expected actual=$Actual" }
+}
+
+function Get-OptionalHash {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-CandidateState {
+    $BackupFiles = @(Get-ChildItem -LiteralPath $BackupRoot -File -Recurse -Force -ErrorAction Stop)
+    if ($BackupFiles.Count -gt 10000) { throw 'candidate backup snapshot exceeded 10000 files' }
+    $CandidateBackups = @(
+        $BackupFiles |
+        Where-Object {
+            $Name = $_.FullName.Replace('/', '\').ToLowerInvariant()
+            $Name.EndsWith('\skse\plugins\hoarfrost.dll') -or
+                $Name.EndsWith('\skse\plugins\hoarfrost.pdb')
+        } |
+        Sort-Object FullName |
+        ForEach-Object {
+            [ordered]@{
+                path = $_.FullName.ToLowerInvariant()
+                sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+        }
+    )
+    return ([ordered]@{
+        dll_sha256 = Get-OptionalHash $CandidateDll
+        pdb_sha256 = Get-OptionalHash $CandidatePdb
+        backups = $CandidateBackups
+    } | ConvertTo-Json -Depth 5 -Compress)
 }
 
 function Add-AllowRule {
@@ -106,31 +139,6 @@ function Assert-NoBroadWriteAcl {
     }
 }
 
-function Invoke-SshdValidation {
-    param([string]$ConfigPath, [string]$User)
-    $Connection = "user=$User,host=$env:COMPUTERNAME,addr=127.0.0.1,laddr=127.0.0.1,lport=22"
-    $Output = @(& $Sshd '-T' '-f' $ConfigPath '-C' $Connection 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "sshd -T failed for ${User}: $($Output -join '; ')" }
-    $Lines = @(
-        $Output |
-        ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } |
-        Where-Object { $_ } |
-        Sort-Object
-    )
-    if ($Lines.Count -lt 20) { throw "sshd -T returned insufficient effective configuration for $User" }
-    return $Lines
-}
-
-function Effective-Map {
-    param([string[]]$Lines)
-    $Result = @{}
-    foreach ($Line in $Lines) {
-        $Parts = $Line -split '\s+', 2
-        if ($Parts.Count -eq 2) { $Result[$Parts[0].ToLowerInvariant()] = $Parts[1] }
-    }
-    return $Result
-}
-
 $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $Principal = [Security.Principal.WindowsPrincipal]::new($Identity)
 if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -171,51 +179,14 @@ foreach ($RuntimePath in @($Node, (Split-Path -Parent $Node), (Split-Path -Paren
 $NodeHash = (Get-FileHash -LiteralPath $Node -Algorithm SHA256).Hash.ToLowerInvariant()
 & $Node '--check' $Worker
 if ($LASTEXITCODE -ne 0) { throw 'deployment worker JavaScript syntax check failed' }
+$CandidateStateBefore = Get-CandidateState
 $KeyLines = @(Get-Content -LiteralPath $PublicKey | Where-Object { $_.Trim() })
 if ($KeyLines.Count -ne 1 -or $KeyLines[0] -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: .*)?$') {
     throw 'deployment public key must contain exactly one Ed25519 public key'
 }
 $BlockBegin = '# BEGIN SkyrimToolBridge project-deploy-v1'
 $BlockEnd = '# END SkyrimToolBridge project-deploy-v1'
-$LiveConfigText = [IO.File]::ReadAllText($SshConfig)
-$BeginCount = ([regex]::Matches($LiveConfigText, '(?m)^' + [regex]::Escape($BlockBegin) + '\r?$')).Count
-$EndCount = ([regex]::Matches($LiveConfigText, '(?m)^' + [regex]::Escape($BlockEnd) + '\r?$')).Count
-if ($BeginCount -ne $EndCount -or $BeginCount -gt 1) { throw 'managed SkyrimDeploy sshd block markers are ambiguous' }
-if ($BeginCount -eq 1) {
-    $ManagedPattern = '(?ms)^' + [regex]::Escape($BlockBegin) + '\r?\n.*?^' + [regex]::Escape($BlockEnd) + '\r?\n?'
-    $BaseConfigText = [regex]::Replace($LiveConfigText, $ManagedPattern, '')
-    if ($BaseConfigText -eq $LiveConfigText) { throw 'managed SkyrimDeploy sshd block could not be isolated for update' }
-} else {
-    $BaseConfigText = $LiveConfigText
-}
-$BaseActiveConfig = @($BaseConfigText -split '\r?\n' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') })
-if ($BaseActiveConfig -match '(?i)^\s*Match\s+User\s+.*\bskyrimdeploy\b') {
-    throw 'an unmanaged SkyrimDeploy sshd Match block exists; refusing ambiguous provisioning'
-}
-
-Write-Host '=== Validate candidate sshd_config before any service change ==='
-$Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$Candidate = Join-Path $SshDirectory "sshd_config.project-deploy.$Stamp.candidate"
-$ConfigBackup = Join-Path $SshDirectory "sshd_config.project-deploy.$Stamp.bak"
-& $Sshd '-t' '-f' $SshConfig
-if ($LASTEXITCODE -ne 0) { throw 'baseline sshd_config failed syntax validation' }
-$ExistingUsers = @(
-    Get-LocalUser |
-    Where-Object { $_.Name -ine $AccountName } |
-    ForEach-Object { $_.Name.ToLowerInvariant() } |
-    Sort-Object -Unique
-)
-foreach ($RequiredExisting in @('hoarfrosttransfer','hoarfrostbuild')) {
-    if ($RequiredExisting -notin $ExistingUsers) { throw "required bounded SSH identity is absent: $RequiredExisting" }
-}
-$Baseline = @{}
-foreach ($ExistingUser in $ExistingUsers) {
-    $Baseline[$ExistingUser] = Invoke-SshdValidation $SshConfig $ExistingUser
-}
-$DeployBaseline = Invoke-SshdValidation $SshConfig $AccountName
-[IO.File]::WriteAllText($Candidate, $BaseConfigText.TrimEnd([char[]]"`r`n") + "`r`n", [Text.UTF8Encoding]::new($false))
-@(
-    '',
+$ManagedLines = @(
     $BlockBegin,
     '# Bounded Skyrim project deployment forced command',
     'Match User skyrimdeploy',
@@ -242,47 +213,67 @@ $DeployBaseline = Invoke-SshdValidation $SshConfig $AccountName
     '    MaxSessions 1',
     '    ChannelTimeout session=600',
     $BlockEnd
-) | Add-Content -LiteralPath $Candidate -Encoding Ascii
+)
+$ManagedBlockText = ($ManagedLines -join "`r`n") + "`r`n"
+$ManagedPattern = '(?ms)^' + [regex]::Escape($BlockBegin) + '\r?\n.*?^' + [regex]::Escape($BlockEnd) + '\r?\n?'
+
+Write-Host '=== Validate byte-preserving candidate sshd_config before any service change ==='
+$Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$Candidate = Join-Path $SshDirectory "sshd_config.project-deploy.$Stamp.candidate"
+$ConfigBackup = Join-Path $SshDirectory "sshd_config.project-deploy.$Stamp.bak"
+& $Sshd '-t' '-f' $SshConfig
+if ($LASTEXITCODE -ne 0) { throw 'baseline sshd_config failed syntax validation' }
+$ExistingUsers = @(Get-LocalUser | Where-Object { $_.Name -ine $AccountName } | Select-Object -ExpandProperty Name)
+foreach ($RequiredExisting in @('HoarfrostTransfer','HoarfrostBuild')) {
+    if (-not ($ExistingUsers -icontains $RequiredExisting)) { throw "required bounded SSH identity is absent: $RequiredExisting" }
+}
+
+$LiveConfigBytes = [IO.File]::ReadAllBytes($SshConfig)
+if (@($LiveConfigBytes | Where-Object { $_ -gt 127 }).Count -ne 0) {
+    throw 'sshd_config contains non-ASCII bytes; refusing a byte-ambiguous managed-block update'
+}
+$Ascii = [Text.Encoding]::ASCII
+$LiveConfigText = $Ascii.GetString($LiveConfigBytes)
+$ManagedMatches = @([regex]::Matches($LiveConfigText, $ManagedPattern))
+$BeginCount = ([regex]::Matches($LiveConfigText, '(?m)^' + [regex]::Escape($BlockBegin) + '\r?$')).Count
+$EndCount = ([regex]::Matches($LiveConfigText, '(?m)^' + [regex]::Escape($BlockEnd) + '\r?$')).Count
+if ($BeginCount -ne $EndCount -or $BeginCount -gt 1 -or $ManagedMatches.Count -ne $BeginCount) {
+    throw 'managed SkyrimDeploy sshd block markers are ambiguous'
+}
+if ($ManagedMatches.Count -eq 1) {
+    $ManagedMatch = $ManagedMatches[0]
+    $Before = if ($ManagedMatch.Index -gt 0) { $LiveConfigBytes[0..($ManagedMatch.Index - 1)] } else { @() }
+    $AfterIndex = $ManagedMatch.Index + $ManagedMatch.Length
+    $After = if ($AfterIndex -lt $LiveConfigBytes.Length) { $LiveConfigBytes[$AfterIndex..($LiveConfigBytes.Length - 1)] } else { @() }
+    $BaseConfigBytes = [byte[]]@($Before + $After)
+} else {
+    $BaseConfigBytes = [byte[]]$LiveConfigBytes.Clone()
+}
+$BaseConfigText = $Ascii.GetString($BaseConfigBytes)
+$BaseActiveConfig = @($BaseConfigText -split '\r?\n' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') })
+if ($BaseActiveConfig -match '(?i)^\s*Match\s+User\s+.*\bskyrimdeploy\b') {
+    throw 'an unmanaged SkyrimDeploy sshd Match block exists; refusing ambiguous provisioning'
+}
+$Separator = if ($BaseConfigBytes.Length -gt 0 -and $BaseConfigBytes[$BaseConfigBytes.Length - 1] -eq 10) { '' } else { "`r`n" }
+$AppendBytes = $Ascii.GetBytes($Separator + $ManagedBlockText)
+$CandidateBytes = [byte[]]@($BaseConfigBytes + $AppendBytes)
+[IO.File]::WriteAllBytes($Candidate, $CandidateBytes)
+for ($Index = 0; $Index -lt $BaseConfigBytes.Length; $Index++) {
+    if ($CandidateBytes[$Index] -ne $BaseConfigBytes[$Index]) {
+        throw "candidate changed pre-existing sshd_config byte at offset $Index"
+    }
+}
+$CandidateText = $Ascii.GetString([IO.File]::ReadAllBytes($Candidate))
+$CandidateManagedMatches = @([regex]::Matches($CandidateText, $ManagedPattern))
+if ($CandidateManagedMatches.Count -ne 1 -or $CandidateManagedMatches[0].Value -cne $ManagedBlockText) {
+    throw 'candidate does not contain exactly the canonical managed SkyrimDeploy block'
+}
+if (([regex]::Matches($CandidateText, '(?im)^\s*Match\s+User\s+skyrimdeploy\s*$')).Count -ne 1) {
+    throw 'candidate does not contain exactly one structural SkyrimDeploy Match User line'
+}
 & $Sshd '-t' '-f' $Candidate
 if ($LASTEXITCODE -ne 0) { throw 'candidate sshd_config failed syntax validation' }
-foreach ($ExistingUser in $ExistingUsers) {
-    $CandidateExisting = Invoke-SshdValidation $Candidate $ExistingUser
-    if (Compare-Object -ReferenceObject $Baseline[$ExistingUser] -DifferenceObject $CandidateExisting) {
-        throw "candidate changes effective sshd configuration for $ExistingUser"
-    }
-}
-$DeployEffective = Effective-Map (Invoke-SshdValidation $Candidate $AccountName)
-$ExpectedEffective = @{
-    pubkeyauthentication = 'yes'
-    passwordauthentication = 'no'
-    kbdinteractiveauthentication = 'no'
-    authenticationmethods = 'publickey'
-    authorizedkeysfile = 'C:/ProgramData/SkyrimToolBridge/openssh/authorized_keys'
-    forcecommand = $ForceCommand
-    disableforwarding = 'yes'
-    allowtcpforwarding = 'no'
-    allowstreamlocalforwarding = 'no'
-    allowagentforwarding = 'no'
-    x11forwarding = 'no'
-    gatewayports = 'no'
-    permittunnel = 'no'
-    permitopen = 'none'
-    permitlisten = 'none'
-    permittty = 'no'
-    permituserenvironment = 'no'
-    permituserrc = 'no'
-    permitemptypasswords = 'no'
-    maxauthtries = '3'
-    maxsessions = '1'
-    channeltimeout = 'session=600'
-    strictmodes = 'yes'
-}
-foreach ($Name in $ExpectedEffective.Keys) {
-    if (-not $DeployEffective.ContainsKey($Name) -or $DeployEffective[$Name] -ine $ExpectedEffective[$Name]) {
-        throw "candidate SkyrimDeploy effective setting mismatch: $Name expected='$($ExpectedEffective[$Name])' actual='$($DeployEffective[$Name])'"
-    }
-}
-Write-Host 'Candidate syntax/effective validation passed; existing bounded users unchanged.'
+Write-Host 'Candidate syntax, byte preservation, and exact managed-block validation passed; live SSH smoke remains required.'
 
 Write-Host '=== Snapshot rollback state ==='
 $RuntimeBackup = Join-Path $BackupRoot "provisioning-$Stamp"
@@ -360,17 +351,9 @@ try {
         Start-Sleep 1
     }
     if (-not $Healthy) { throw 'sshd did not return healthy with a port 22 listener within 20 seconds' }
-    foreach ($ExistingUser in $ExistingUsers) {
-        $InstalledExisting = Invoke-SshdValidation $SshConfig $ExistingUser
-        if (Compare-Object -ReferenceObject $Baseline[$ExistingUser] -DifferenceObject $InstalledExisting) {
-            throw "installed config changes effective sshd behavior for $ExistingUser"
-        }
-    }
-    $InstalledDeploy = Effective-Map (Invoke-SshdValidation $SshConfig $AccountName)
-    foreach ($Name in $ExpectedEffective.Keys) {
-        if (-not $InstalledDeploy.ContainsKey($Name) -or $InstalledDeploy[$Name] -ine $ExpectedEffective[$Name]) {
-            throw "installed SkyrimDeploy effective setting mismatch after restart: $Name"
-        }
+    Assert-Hash $SshConfig $InstalledConfigHash
+    if ((Get-CandidateState) -cne $CandidateStateBefore) {
+        throw 'ordinary-finger candidate destinations or candidate backups changed during provisioning'
     }
 } catch {
     $Failure = $_
@@ -429,15 +412,13 @@ try {
         if ((Get-Service sshd).Status -ne 'Running') { throw 'restored sshd did not reach Running' }
         $RestoredListener = Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $RestoredListener) { throw 'restored sshd has no port 22 listener' }
-        foreach ($ExistingUser in $ExistingUsers) {
-            if (Compare-Object $Baseline[$ExistingUser] (Invoke-SshdValidation $SshConfig $ExistingUser)) {
-                throw "restored effective config differs for $ExistingUser"
-            }
-        }
-        if (Compare-Object $DeployBaseline (Invoke-SshdValidation $SshConfig $AccountName)) {
-            throw 'restored effective config differs for SkyrimDeploy'
-        }
+        Assert-Hash $SshConfig $OriginalConfigHash
     } catch { $RollbackErrors += "restart/validate restored sshd: $($_.Exception.Message)" }
+    try {
+        if ((Get-CandidateState) -cne $CandidateStateBefore) {
+            throw 'ordinary-finger candidate destinations or candidate backups changed during provisioning/rollback'
+        }
+    } catch { $RollbackErrors += "candidate-state validation: $($_.Exception.Message)" }
     if ($RollbackErrors.Count -gt 0) {
         throw "provisioning failed: $($Failure.Exception.Message); ROLLBACK FAILED: $($RollbackErrors -join '; ')"
     }

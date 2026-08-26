@@ -70,6 +70,16 @@ class ProjectDeployTests(unittest.TestCase):
                 None,
             )
 
+    def test_provisioning_avoids_administrator_side_user_evaluation(self):
+        provision = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" / "provision.ps1"
+        ).read_text()
+        self.assertNotIn("sshd -T", provision)
+        self.assertNotIn("'-T'", provision)
+        self.assertIn("& $Sshd '-t' '-f' $SshConfig", provision)
+        self.assertIn("& $Sshd '-t' '-f' $Candidate", provision)
+        self.assertIn("candidate does not contain exactly the canonical managed SkyrimDeploy block", provision)
+
     def test_dry_run_never_starts_ssh(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

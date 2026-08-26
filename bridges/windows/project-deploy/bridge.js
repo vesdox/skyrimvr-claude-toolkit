@@ -10,6 +10,8 @@ const WORKER_PATH =
   'C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\bridge\\bridge.js';
 const WRAPPER_PATH =
   'C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\invoke-ssh.ps1';
+const AUTHORIZED_KEYS_PATH =
+  'C:\\ProgramData\\SkyrimToolBridge\\openssh\\authorized_keys';
 const EXPECTED_SID = 'S-1-5-21-3046562540-2879210194-691397096-1014';
 const MAX_REQUEST_BYTES = 180 * 1024 * 1024;
 const MAX_CONTENT_BYTES = 128 * 1024 * 1024;
@@ -483,12 +485,60 @@ async function expectWriteRefused(filename) {
   }
 }
 
+async function snapshotRegisteredDestinations(target) {
+  const result = {};
+  for (const [id, artifact] of Object.entries(target.artifacts)) {
+    const relative = normalizeRelative(artifact.destination);
+    const destination = await validateDestination(target.root, relative);
+    result[id] = await currentHash(destination);
+  }
+  return result;
+}
+
+async function snapshotRegisteredBackups(config, target) {
+  const suffixes = Object.values(target.artifacts).map(artifact =>
+    normalizeRelative(artifact.destination).toLowerCase()
+  );
+  const result = {};
+  let visited = 0;
+  async function walk(directory, depth) {
+    if (depth > 16) throw new Error('backup snapshot exceeded maximum depth');
+    let entries;
+    try {
+      entries = await fs.promises.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      visited += 1;
+      if (visited > 10000) throw new Error('backup snapshot exceeded maximum entries');
+      const filename = path.win32.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`backup snapshot encountered a symbolic link: ${filename}`);
+      if (entry.isDirectory()) {
+        await walk(filename, depth + 1);
+      } else if (entry.isFile() && suffixes.some(suffix => filename.toLowerCase().endsWith(suffix))) {
+        result[filename.toLowerCase()] = await sha256File(filename);
+      }
+    }
+  }
+  await walk(config.backup_root, 0);
+  return result;
+}
+
+function sameSnapshot(before, after) {
+  return JSON.stringify(before, Object.keys(before).sort()) ===
+    JSON.stringify(after, Object.keys(after).sort());
+}
+
 async function smoke(config) {
   const keys = Object.keys(config.targets);
   if (keys.length !== 1) throw new Error('smoke requires one exact protected target');
   const target = config.targets[keys[0]];
   const modsRoot = path.win32.dirname(target.root);
   const pluginRoot = path.win32.join(target.root, 'SKSE', 'Plugins');
+  const destinationSnapshot = await snapshotRegisteredDestinations(target);
+  const backupSnapshot = await snapshotRegisteredBackups(config, target);
   const token = crypto.randomUUID().replaceAll('-', '').slice(0, 8);
   const probe = path.win32.join(pluginRoot, `.hf-${token}.tmp`);
   const oldContent = Buffer.from(`old-${token}`, 'utf8');
@@ -530,6 +580,14 @@ async function smoke(config) {
     }
   }
   if (unrelatedCount < 1) throw new Error('no unrelated mod roots were tested');
+  const destinationsAfter = await snapshotRegisteredDestinations(target);
+  const backupsAfter = await snapshotRegisteredBackups(config, target);
+  if (!sameSnapshot(destinationSnapshot, destinationsAfter)) {
+    throw new Error('registered candidate destinations changed during fixed smoke');
+  }
+  if (!sameSnapshot(backupSnapshot, backupsAfter)) {
+    throw new Error('registered candidate backups changed during fixed smoke');
+  }
 
   return {
     ok: true,
@@ -541,6 +599,9 @@ async function smoke(config) {
     config_write_open_refused: await expectWriteRefused(CONFIG_PATH),
     worker_write_open_refused: await expectWriteRefused(WORKER_PATH),
     wrapper_write_open_refused: await expectWriteRefused(WRAPPER_PATH),
+    authorized_keys_write_open_refused: await expectWriteRefused(AUTHORIZED_KEYS_PATH),
+    registered_destinations_unchanged: true,
+    registered_backups_unchanged: true,
     smoke_backup_removed: true
   };
 }

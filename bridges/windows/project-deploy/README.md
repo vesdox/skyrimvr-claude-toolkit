@@ -79,20 +79,24 @@ ASSOS ACLs. Before changing the live service it:
 
 1. verifies source hashes, non-administrator account SID, absent task/listener,
    protected parent/runtime ACLs, and a pinned-path Node.js 20+ runtime;
-2. builds a candidate `sshd_config` with a dedicated Match block;
-3. runs `sshd.exe -t` and non-empty `sshd.exe -T -C` checks;
-4. proves effective settings for every existing local user, including
-   `HoarfrostTransfer` and `HoarfrostBuild`, are unchanged;
-5. proves every required `SkyrimDeploy` restriction is effective;
+2. preserves every pre-existing `sshd_config` byte while inserting exactly one
+   canonical, structurally validated managed `SkyrimDeploy` Match block;
+3. runs `sshd.exe -t -f` against the baseline, candidate, installed, and restored
+   configurations without Administrator-side `sshd -T -C user=...` evaluation;
+4. verifies the existing `HoarfrostTransfer` and `HoarfrostBuild` local identities
+   remain present while leaving their configuration bytes untouched;
+5. defers effective forced-command and existing-identity semantics to live SSH through
+   the actual LocalSystem sshd service;
 6. backs up runtime files and `sshd_config`, installs exact ACLs, and restarts sshd;
 7. restores compare-and-swap-validated original state, waits for sshd transitions,
    and revalidates the restored port-22 service if activation/health checks fail.
 
 A remote smoke with the dedicated key is still required after local provisioning. It
-must prove valid protocol access, shell/SFTP/PTY/forwarding refusal, unrelated-mod
-refusal, protected-file refusal, target probe and smoke-backup cleanup,
-backup/replace/rollback, audit evidence, and unchanged existing build/transfer access. Smoke must not deploy a
-registered candidate artifact.
+must prove dedicated-key-only protocol access, shell/SFTP/PTY/forwarding refusal,
+unrelated-mod refusal, protected worker/wrapper/config/key refusal, target probe and
+smoke-backup cleanup, backup/replace/rollback, audit evidence, unchanged existing
+build/transfer authentication behavior, and unchanged registered destination/backup
+snapshots. Smoke must not deploy a registered candidate artifact.
 
 ## Client behavior
 

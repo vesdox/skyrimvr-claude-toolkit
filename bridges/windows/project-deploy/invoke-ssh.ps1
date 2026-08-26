@@ -6,7 +6,7 @@ $ExpectedCommand = 'project-deploy-v1'
 $Node = 'D:\Program Files\nodejs\node.exe'
 $Worker = 'C:\ProgramData\SkyrimToolBridge\project-deploy\bridge\bridge.js'
 $Config = 'C:\ProgramData\SkyrimToolBridge\project-deploy\config.json'
-$ExpectedWorkerHash = 'ff0100ef0c1a57a27e1c35a3e12d995619f97e41ca690eabf2c9319b302f6742'
+$ExpectedWorkerHash = '99eabaafbd3e0b850ae0d3e8a891e4443d57dd2900a2423f5c9804a5e87e6442'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 
 function Write-Failure {
