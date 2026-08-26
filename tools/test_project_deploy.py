@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import project_deploy as deploy
 
@@ -68,6 +69,70 @@ class ProjectDeployTests(unittest.TestCase):
                 ["not-registered"],
                 None,
             )
+
+    def test_dry_run_never_starts_ssh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "mods"
+            destination = evidence / "Hoarfrost - Development" / "SKSE" / "Plugins"
+            destination.mkdir(parents=True)
+            existing = destination / "Hoarfrost.dll"
+            existing.write_bytes(b"old")
+            source = root / "Hoarfrost.dll"
+            source.write_bytes(b"new")
+            environment = {
+                "deployment": {
+                    "mo2_mods_root_windows": r"D:\Games\ASSOS\mods",
+                    "mo2_mods_root_evidence": str(evidence),
+                }
+            }
+            target = {"mod": "Hoarfrost - Development"}
+            artifacts = [{
+                "id": "dll",
+                "provenance": "windows-native-build",
+                "source": source,
+                "destination": "SKSE/Plugins/Hoarfrost.dll",
+                "sha256": deploy.sha256_file(source),
+            }]
+            with mock.patch.object(deploy.subprocess, "Popen") as popen:
+                deploy.dry_run(environment, target, artifacts)
+            popen.assert_not_called()
+
+    def test_ssh_bridge_requires_exact_identity_and_forced_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            identity = Path(directory) / "deploy-key"
+            identity.write_text("private-test-key")
+            identity.chmod(0o600)
+            known_hosts = Path(directory) / "known-hosts"
+            known_hosts.write_text(
+                "100.113.242.33 ssh-ed25519 "
+                "AAAAC3NzaC1lZDI1NTE5AAAAILUEe4QLCur7cCGeKR8ujR7Mx2QH0/lRBUW3OuzS7GBM\n"
+            )
+            known_hosts.chmod(0o600)
+            environment = {"bridges": {"project_deploy": {
+                "protocol": "project-deploy-ssh-v1",
+                "host": "100.113.242.33",
+                "port": 22,
+                "user": "SkyrimDeploy",
+                "identity_file": str(identity),
+                "known_hosts_file": str(known_hosts),
+                "host_key_sha256": "SHA256:Hx/P6Q5YyPQmche/iwfecrqMccp03G1dAJFmSO/xwpE",
+                "command": "project-deploy-v1",
+            }}}
+            resolved = deploy.ssh_bridge_config(environment)
+            self.assertEqual(resolved["user"], "SkyrimDeploy")
+            self.assertEqual(resolved["port"], 22)
+            environment["bridges"]["project_deploy"]["port"] = 2222
+            with self.assertRaises(deploy.DeployError):
+                deploy.ssh_bridge_config(environment)
+            environment["bridges"]["project_deploy"]["port"] = 22
+            environment["bridges"]["project_deploy"]["user"] = "HoarfrostBuild"
+            with self.assertRaises(deploy.DeployError):
+                deploy.ssh_bridge_config(environment)
+            environment["bridges"]["project_deploy"]["user"] = "SkyrimDeploy"
+            environment["bridges"]["project_deploy"]["command"] = "powershell.exe"
+            with self.assertRaises(deploy.DeployError):
+                deploy.ssh_bridge_config(environment)
 
 
 if __name__ == "__main__":

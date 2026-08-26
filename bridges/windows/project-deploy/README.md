@@ -1,33 +1,45 @@
-# Bounded project deployment bridge
+# Bounded project deployment forced command
 
-This bridge is the Windows write boundary behind `skyrim-agent deploy`. It is not a
-remote shell and exposes only:
+This directory implements the Windows write boundary behind `skyrim-agent deploy`.
+It is not a remote shell, SFTP endpoint, daemon, or general command runner. A dedicated
+SSH key authenticates only as the non-admin local `SkyrimDeploy` identity; an OpenSSH
+`Match User skyrimdeploy` block forces `invoke-ssh.ps1` and disables passwords, PTY,
+user RC files, tunneling, and all forwarding.
 
-- `GET /health`
-- `POST /plan`
-- `POST /apply`
+The wrapper accepts only the literal SSH original command `project-deploy-v1`, verifies
+its own protected worker/config hashes and exact Windows SID, refuses requests while
+Skyrim is running, and launches `bridge.js --stdio`. The worker requires pinned protocol magic and
+length-prefixed JSON frames, reads at most two requests, and reserves stdout solely
+for framed protocol responses. OpenSSH terminates an idle session after 600 seconds;
+a dead apply lock becomes recoverable only after 15 minutes and a dead-PID check:
 
-`plan` accepts registered logical IDs and hashes, resolves them through a generated
-allowlist, hashes every current destination, and returns a five-minute one-use token.
-`apply` requires that token, the exact planned bytes, and unchanged destination
-hashes. The protected generated allowlist also pins every permitted source SHA256, so
-a caller cannot substitute arbitrary bytes for a registered artifact ID. The bridge
-backs up replaced files, stages and hashes each source, replaces only the registered
-destination, verifies the resulting SHA256, and rolls back completed replacements if
-the transaction fails.
+- `health`: validate the protected runtime and return service identity;
+- `smoke`: fixed ACL/backup/rollback checks using disposable probe files;
+- `plan`: validate registered artifact IDs/hashes and return destination hashes plus a
+  five-minute one-use token;
+- `apply`: accept exact planned bytes on the same SSH process, recheck destination
+  hashes, back up replacements, stage/hash/replace, verify results, and roll back on
+  failure.
+
+Every accepted/rejected operation is appended to a protected NDJSON audit file under
+the configured backup root. Apply records include apply-start, commit, and failure or
+rollback status; a commit-audit failure triggers transaction rollback. Audit records
+omit payload bytes and raw plan tokens.
 
 ## Trust boundary
 
-The bridge binds only to `127.0.0.1:7347` and is intended to be exposed as the
-`/project-deploy` path through Tailscale Serve. The dedicated Windows identity is
-`SkyrimDeploy`; it must have modify permission only on the registered deployment
-mod directory and its protected backup tree. It must not have permission to edit MO2
-profiles, `plugins.txt`, `loadorder.txt`, saves, game/runtime configuration, or other
-mods. Do not run this service as the native-build or read-only `SkyrimInspect`
-identity.
+`SkyrimDeploy` has an ASSOS-wide write/delete deny and Modify only on the registered
+`Hoarfrost - Development` target and protected backup tree. Worker, wrapper,
+configuration, and authorized-key files are read-only to that identity and writable
+only by Administrators/SYSTEM. These filesystem ACLs remain the backstop even if a
+request is malformed.
 
-The bridge never accepts an arbitrary filesystem path. Its protected `config.json`
-is generated from the shared project/environment registries:
+Never reuse the build (`HoarfrostBuild`/`SkyrimBuildWorkers`), transfer
+(`HoarfrostTransfer`), read-only (`SkyrimInspect`), or Administrator identities for
+runtime deployment. Build permission does not imply deployment permission.
+
+The worker never accepts arbitrary commands or filesystem paths. Its protected
+`config.json` is generated from shared registries:
 
 ```bash
 python3 tools/export_deployment_bridge_config.py \
@@ -35,61 +47,56 @@ python3 tools/export_deployment_bridge_config.py \
   --output /tmp/assos-project-deploy.json
 ```
 
-The ASSOS MO2 root lives in `environments/assos.toml`; the Hoarfrost target, allowed
-sets, exact source ownership, and destination-relative paths live in
-`projects/hoarfrost.toml`. The full destination is therefore not hardcoded in either
-the Linux client or bridge source.
+The ASSOS root and SSH endpoint are registered in `environments/assos.toml`; project
+targets, allowed sets, source ownership, expected hashes, and destination-relative
+paths are registered in `projects/hoarfrost.toml`.
 
 ## Protected runtime layout
 
-- bridge: `C:\ProgramData\SkyrimToolBridge\project-deploy\bridge\bridge.js`
-- generated allowlist: `C:\ProgramData\SkyrimToolBridge\project-deploy\config.json`
-- backups: registry-configured protected backup root
-- scheduled task: `SkyrimToolBridge-Project-Deploy` (S4U, `SkyrimDeploy`)
+- worker: `C:\ProgramData\SkyrimToolBridge\project-deploy\bridge\bridge.js`
+- wrapper: `C:\ProgramData\SkyrimToolBridge\project-deploy\invoke-ssh.ps1`
+- allowlist: `C:\ProgramData\SkyrimToolBridge\project-deploy\config.json`
+- backups/audit: registry-configured protected backup root
+- public key: `C:\ProgramData\SkyrimToolBridge\openssh\authorized_keys`
+- transport: existing Windows OpenSSH 9.5p2 service on pinned port 22 and host key
 
-`provision.ps1` is the owner/admin initial-provisioning entry point. It creates a
-random-password non-admin `SkyrimDeploy` identity, denies that identity inherited
-write/delete rights across the ASSOS tree, explicitly grants Modify only on the
-registered `Hoarfrost - Development` target, protects service/config state from
-unprivileged writes, registers the S4U task, proves listener ownership, and runs a
-one-shot effective-permission smoke. That smoke must write/hash/remove a temporary
-file under the real registered `SKSE\Plugins` destination, refuse temporary writes
-across every unrelated ASSOS mod root, and refuse write-open access to the protected
-config and bridge files. Provisioning leaves Tailscale unchanged until those local
-checks pass; the owner then adds the path-scoped Serve route as a separate observable
-step and verifies that the existing read route is unchanged.
+There is deliberately no deployment Scheduled Task, port 7347 listener, Tailscale
+Serve route, deployment SFTP subsystem, or persistent deployment process.
 
-`batch-right.ps1` grants only `SeBatchLogonRight` to an exact expected
-`SkyrimDeploy` SID and verifies readback. This right is required by the local-account
-S4U pattern; the established `SkyrimInspect` S4U identity has the same right.
+## Provisioning and recovery history
 
-`acl-smoke.ps1` is an internal fixed-operation helper run only through a temporary
-S4U task by `provision.ps1`; it is not a general command runner.
+Initial Scheduler-based provisioning on 2026-08-25 partially completed account and
+ACL setup, then repeatedly failed task registration with `0x80070005`. Granting
+`SeBatchLogonRight` did not change that failure, disproving it as the root cause.
+Read-only comparison found no concrete Scheduler authorization cause, and that route
+was retired. Do not run historical task recovery scripts or reapply the ASSOS ACL
+tree.
 
-`resume-task.ps1` is a one-time, SID-pinned recovery for the diagnosed ASSOS partial
-provisioning state. It preserves existing ACLs/files, grants the missing batch-logon
-right, registers or validates only the exact service task, starts the loopback bridge,
-and runs the fixed ACL smoke. It does not configure Tailscale or deploy artifacts.
+The current `provision.ps1` is a SID-pinned continuation for that exact partial state
+and the controlled updater for its uniquely marked OpenSSH block. It refuses unmanaged
+or ambiguous `SkyrimDeploy` blocks, does not create an account, and does not alter
+ASSOS ACLs. Before changing the live service it:
 
-### Diagnosed ASSOS partial state (2026-08-25)
+1. verifies source hashes, non-administrator account SID, absent task/listener,
+   protected parent/runtime ACLs, and a pinned-path Node.js 20+ runtime;
+2. builds a candidate `sshd_config` with a dedicated Match block;
+3. runs `sshd.exe -t` and non-empty `sshd.exe -T -C` checks;
+4. proves effective settings for every existing local user, including
+   `HoarfrostTransfer` and `HoarfrostBuild`, are unchanged;
+5. proves every required `SkyrimDeploy` restriction is effective;
+6. backs up runtime files and `sshd_config`, installs exact ACLs, and restarts sshd;
+7. restores compare-and-swap-validated original state, waits for sshd transitions,
+   and revalidates the restored port-22 service if activation/health checks fail.
 
-The first task-registration attempt stopped with `0x80070005` after creating SID
-`S-1-5-21-3046562540-2879210194-691397096-1014`, applying the ASSOS deny and isolated
-Hoarfrost target allow, and protecting/copying bridge configuration. Read-only
-inspection established: no deployment task, no port 7347 listener, no Tailscale
-change, no candidate deployment, and no account rights for `SkyrimDeploy`; the
-working local `SkyrimInspect` S4U identity has `SeBatchLogonRight`. Recovery must not
-rerun the ASSOS ACL provisioning.
-
-`deploy.ps1` updates only an already-provisioned protected bridge/config. It requires
-pinned source/config hashes and the exact single Hoarfrost/ASSOS allowlist, then
-verifies deployed hashes, exact S4U task identity, loopback binding, post-start
-process owner, and health. Initial provisioning and future updates remain owner/admin actions; they
-are intentionally not exposed through an agent or general remote-shell command.
+A remote smoke with the dedicated key is still required after local provisioning. It
+must prove valid protocol access, shell/SFTP/PTY/forwarding refusal, unrelated-mod
+refusal, protected-file refusal, target probe and smoke-backup cleanup,
+backup/replace/rollback, audit evidence, and unchanged existing build/transfer access. Smoke must not deploy a
+registered candidate artifact.
 
 ## Client behavior
 
-Dry-run does not contact this write bridge. It hashes sources locally and inspects the
-registered read-only environment evidence path for the current destination. Apply
-always uses the bridge's authoritative two-phase check; the read-only mount is never
-a write route.
+Dry-run never writes: it verifies source/build provenance and reads registered
+read-only destination evidence. Apply opens one dedicated forced-command SSH process,
+performs plan and apply as two messages in that process, and validates all returned
+paths and hashes. There is no direct SFTP or unrestricted SSH fallback.

@@ -9,7 +9,9 @@
   inspection, and a two-phase constrained Windows bridge with backups, race checks,
   resulting-hash verification, and rollback. Hoarfrost is initially authorized only
   for `Hoarfrost - Development` in ASSOS; load order, mod enablement, game launch,
-  saves, and runtime configuration remain outside the capability.
+  saves, and runtime configuration remain outside the capability. The Windows write
+  transport uses a dedicated `SkyrimDeploy` OpenSSH forced command with no shell,
+  SFTP, PTY, forwarding, persistent listener, or build/read identity reuse.
 
 ## v3.5.4 — 2026-08-07
 

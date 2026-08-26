@@ -18,6 +18,12 @@ mo2_mods_root_evidence = "/home/wodox/skyrim-dev/windows-ro/assos/mods"
 url = "https://ellfone.tail56758a.ts.net"
 
 [bridges.project_deploy]
-url = "https://ellfone.tail56758a.ts.net/project-deploy"
-protocol = "project-deploy-v1"
+protocol = "project-deploy-ssh-v1"
+host = "100.113.242.33"
+port = 22
+user = "SkyrimDeploy"
+identity_file = "/home/wodox/.ssh/hoarfrost_deploy"
+known_hosts_file = "/home/wodox/.ssh/hoarfrost_deploy_known_hosts"
+host_key_sha256 = "SHA256:Hx/P6Q5YyPQmche/iwfecrqMccp03G1dAJFmSO/xwpE"
+command = "project-deploy-v1"
 backup_root_windows = 'C:\ProgramData\SkyrimToolBridge\project-deploy\backups'

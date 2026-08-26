@@ -1,7 +1,7 @@
 id = "project-deploy"
 name = "Bounded project deployment"
 
-status = "available"
+status = "unconfigured"
 execution = "windows"
 risk = "environment-write"
 
@@ -17,9 +17,11 @@ evidence directory and manifest verification before the deployment bridge is cal
 
 notes = """
 Dry-run reads destination hashes through the registered read-only evidence view but
-never writes through that mount. Apply uses a two-phase constrained bridge: plan
-reports and pins existing hashes, then apply rechecks them, backs up replacements,
-atomically copies registered files, and verifies resulting SHA256 values.
+never writes through that mount. Apply uses one dedicated OpenSSH forced-command
+process with a framed two-phase protocol: plan reports and pins existing hashes, then
+apply rechecks them, backs up replacements, atomically copies registered files, and
+verifies resulting SHA256 values. The transport provides no shell, SFTP, PTY, or
+forwarding capability.
 
 This capability cannot edit plugins.txt/loadorder.txt, enable or disable mods, launch
 Skyrim, modify saves, or change game/runtime configuration. Load-order mutation is a

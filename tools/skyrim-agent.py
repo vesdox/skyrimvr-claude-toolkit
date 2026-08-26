@@ -360,10 +360,22 @@ def validate() -> list[str]:
             if not env_deployment.get("mo2_mods_root_evidence"):
                 errors.append(f"{project_id}: deployment environment '{env_id}' has no evidence mods root")
             deploy_bridge = environment.get("bridges", {}).get("project_deploy", {})
-            if not deploy_bridge.get("url"):
-                errors.append(f"{project_id}: deployment environment '{env_id}' has no bridge URL")
-            if deploy_bridge.get("protocol") != "project-deploy-v1":
+            if deploy_bridge.get("protocol") != "project-deploy-ssh-v1":
                 errors.append(f"{project_id}: deployment environment '{env_id}' has invalid bridge protocol")
+            for field in (
+                "host", "port", "user", "identity_file", "known_hosts_file",
+                "host_key_sha256", "command"
+            ):
+                if not deploy_bridge.get(field):
+                    errors.append(
+                        f"{project_id}: deployment environment '{env_id}' has no bridge {field}"
+                    )
+            if deploy_bridge.get("port") != 22:
+                errors.append(f"{project_id}: deployment environment '{env_id}' has invalid bridge port")
+            if deploy_bridge.get("user") != "SkyrimDeploy":
+                errors.append(f"{project_id}: deployment environment '{env_id}' has invalid bridge user")
+            if deploy_bridge.get("command") != "project-deploy-v1":
+                errors.append(f"{project_id}: deployment environment '{env_id}' has invalid forced command")
             if not deploy_bridge.get("backup_root_windows"):
                 errors.append(f"{project_id}: deployment environment '{env_id}' has no backup root")
 

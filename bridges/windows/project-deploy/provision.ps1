@@ -1,36 +1,40 @@
 param(
-    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Worker,
+    [Parameter(Mandatory = $true)][string]$Wrapper,
     [Parameter(Mandatory = $true)][string]$Config,
-    [Parameter(Mandatory = $true)][string]$SmokeScript,
-    [Parameter(Mandatory = $true)][string]$BatchRightScript
+    [Parameter(Mandatory = $true)][string]$PublicKey
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ExpectedBridgeHash = 'a3a023f2b400b898ac8ab485dc9c89cfe32810136af61dbfd85eccaf617478e5'
+$ExpectedSid = 'S-1-5-21-3046562540-2879210194-691397096-1014'
+$ExpectedWorkerHash = 'ff0100ef0c1a57a27e1c35a3e12d995619f97e41ca690eabf2c9319b302f6742'
+$ExpectedWrapperHash = 'ce2837992e2e116abbca590cb27f7d00800945b6b53d7c1d7b69a0079c8e1107'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
-$ExpectedSmokeHash = '82de9d82f51fedb9d7554fe5dcdf9a614d2e40e25c504c0d2f20959765e72ed5'
-$ExpectedBatchRightHash = 'c68303a99d2bc05d96c903a50d52adf5e8c2d101e6b24592676a04115070defb'
-$Node = 'D:\Program Files\nodejs\node.exe'
-$Stage = 'C:\ProgramData\SkyrimToolBridge\project-deploy'
-$BridgeDirectory = Join-Path $Stage 'bridge'
-$Destination = Join-Path $BridgeDirectory 'bridge.js'
-$ConfigDestination = Join-Path $Stage 'config.json'
-$SmokeDestination = Join-Path $Stage 'acl-smoke.ps1'
-$BatchRightDestination = Join-Path $Stage 'batch-right.ps1'
-$BackupRoot = Join-Path $Stage 'backups'
-$TaskName = 'SkyrimToolBridge-Project-Deploy'
-$SmokeTaskName = 'SkyrimToolBridge-Project-Deploy-ACL-Smoke'
+$ExpectedPublicKeyHash = '91bd33e543bf43ef38683a630da7961e2a50a7060dec4e3a55fd79ac7c1bbb53'
 $AccountName = 'SkyrimDeploy'
 $DeployAccount = "${env:COMPUTERNAME}\$AccountName"
+$Stage = 'C:\ProgramData\SkyrimToolBridge\project-deploy'
+$BridgeDirectory = Join-Path $Stage 'bridge'
+$BackupRoot = Join-Path $Stage 'backups'
+$WorkerDestination = Join-Path $BridgeDirectory 'bridge.js'
+$WrapperDestination = Join-Path $Stage 'invoke-ssh.ps1'
+$ConfigDestination = Join-Path $Stage 'config.json'
+$SshDirectory = 'C:\ProgramData\ssh'
+$SshConfig = Join-Path $SshDirectory 'sshd_config'
+$KeyDirectory = 'C:\ProgramData\SkyrimToolBridge\openssh'
+$AuthorizedKeys = Join-Path $KeyDirectory 'authorized_keys'
+$Sshd = 'C:\Windows\System32\OpenSSH\sshd.exe'
+$Node = 'D:\Program Files\nodejs\node.exe'
+$TaskName = 'SkyrimToolBridge-Project-Deploy'
+$ForceCommand = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:/ProgramData/SkyrimToolBridge/project-deploy/invoke-ssh.ps1'
 
-function Invoke-Icacls {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    & icacls.exe @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "icacls failed with exit code ${LASTEXITCODE}: $($Arguments -join ' ')"
-    }
+function Assert-Hash {
+    param([string]$Path, [string]$Expected)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "required file is absent: $Path" }
+    $Actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($Actual -ne $Expected) { throw "SHA256 mismatch for ${Path}: expected=$Expected actual=$Actual" }
 }
 
 function Add-AllowRule {
@@ -38,7 +42,7 @@ function Add-AllowRule {
         [System.Security.AccessControl.FileSystemSecurity]$Acl,
         [string]$Identity,
         [System.Security.AccessControl.FileSystemRights]$Rights,
-        [System.Security.AccessControl.InheritanceFlags]$Inheritance
+        [System.Security.AccessControl.InheritanceFlags]$Inheritance = [System.Security.AccessControl.InheritanceFlags]::None
     )
     $Rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
         $Identity,
@@ -49,204 +53,405 @@ function Add-AllowRule {
     $Acl.AddAccessRule($Rule) | Out-Null
 }
 
-function Set-ExactDirectoryAcl {
-    param([string]$Path, [System.Security.AccessControl.FileSystemRights]$DeployRights)
-    $Acl = New-Object System.Security.AccessControl.DirectorySecurity
+function Set-ProtectedFileAcl {
+    param(
+        [string]$Path,
+        [System.Security.AccessControl.FileSystemRights]$DeployRights
+    )
+    $Acl = New-Object System.Security.AccessControl.FileSecurity
     $Acl.SetAccessRuleProtection($true, $false)
-    $Inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-    Add-AllowRule $Acl 'BUILTIN\Administrators' ([System.Security.AccessControl.FileSystemRights]::FullControl) $Inheritance
-    Add-AllowRule $Acl 'NT AUTHORITY\SYSTEM' ([System.Security.AccessControl.FileSystemRights]::FullControl) $Inheritance
-    Add-AllowRule $Acl $DeployAccount $DeployRights $Inheritance
+    $Acl.SetOwner([Security.Principal.NTAccount]::new('BUILTIN\Administrators'))
+    Add-AllowRule $Acl 'BUILTIN\Administrators' ([System.Security.AccessControl.FileSystemRights]::FullControl)
+    Add-AllowRule $Acl 'NT AUTHORITY\SYSTEM' ([System.Security.AccessControl.FileSystemRights]::FullControl)
+    Add-AllowRule $Acl $DeployAccount $DeployRights
     Set-Acl -LiteralPath $Path -AclObject $Acl
 }
 
-function Set-ExactFileAcl {
+function Set-KeyFileAcl {
     param([string]$Path)
     $Acl = New-Object System.Security.AccessControl.FileSecurity
     $Acl.SetAccessRuleProtection($true, $false)
-    $None = [System.Security.AccessControl.InheritanceFlags]::None
-    Add-AllowRule $Acl 'BUILTIN\Administrators' ([System.Security.AccessControl.FileSystemRights]::FullControl) $None
-    Add-AllowRule $Acl 'NT AUTHORITY\SYSTEM' ([System.Security.AccessControl.FileSystemRights]::FullControl) $None
-    Add-AllowRule $Acl $DeployAccount ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute) $None
+    $Acl.SetOwner([Security.Principal.NTAccount]::new('BUILTIN\Administrators'))
+    Add-AllowRule $Acl 'BUILTIN\Administrators' ([System.Security.AccessControl.FileSystemRights]::FullControl)
+    Add-AllowRule $Acl 'NT AUTHORITY\SYSTEM' ([System.Security.AccessControl.FileSystemRights]::FullControl)
     Set-Acl -LiteralPath $Path -AclObject $Acl
 }
 
-function Assert-Hash {
-    param([string]$Path, [string]$Expected)
-    $Actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($Actual -ne $Expected) { throw "SHA256 mismatch for $Path; expected=$Expected actual=$Actual" }
+function Set-KeyDirectoryAcl {
+    param([string]$Path)
+    $Acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $Acl.SetAccessRuleProtection($true, $false)
+    $Acl.SetOwner([Security.Principal.NTAccount]::new('BUILTIN\Administrators'))
+    $Inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    Add-AllowRule $Acl 'BUILTIN\Administrators' ([System.Security.AccessControl.FileSystemRights]::FullControl) $Inheritance
+    Add-AllowRule $Acl 'NT AUTHORITY\SYSTEM' ([System.Security.AccessControl.FileSystemRights]::FullControl) $Inheritance
+    Set-Acl -LiteralPath $Path -AclObject $Acl
+}
+
+function Assert-NoBroadWriteAcl {
+    param([string]$Path)
+    $Dangerous = [System.Security.AccessControl.FileSystemRights]'WriteData, AppendData, CreateFiles, CreateDirectories, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership, WriteAttributes, WriteExtendedAttributes'
+    $BroadSids = @($ExpectedSid, 'S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
+    $Acl = Get-Acl -LiteralPath $Path
+    $OwnerSid = $Acl.Owner
+    try { $OwnerSid = ([Security.Principal.NTAccount]$Acl.Owner).Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
+    if ($OwnerSid -in $BroadSids) { throw "runtime path has an untrusted owner: $Path owner=$OwnerSid" }
+    foreach ($Rule in $Acl.Access) {
+        if ($Rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+        $Sid = $Rule.IdentityReference.Value
+        try { $Sid = $Rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch {}
+        if ($Sid -in $BroadSids -and ($Rule.FileSystemRights -band $Dangerous)) {
+            throw "runtime path grants broad write/replace rights: $Path sid=$Sid rights=$($Rule.FileSystemRights)"
+        }
+    }
+}
+
+function Invoke-SshdValidation {
+    param([string]$ConfigPath, [string]$User)
+    $Connection = "user=$User,host=$env:COMPUTERNAME,addr=127.0.0.1,laddr=127.0.0.1,lport=22"
+    $Output = @(& $Sshd '-T' '-f' $ConfigPath '-C' $Connection 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "sshd -T failed for ${User}: $($Output -join '; ')" }
+    $Lines = @(
+        $Output |
+        ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } |
+        Where-Object { $_ } |
+        Sort-Object
+    )
+    if ($Lines.Count -lt 20) { throw "sshd -T returned insufficient effective configuration for $User" }
+    return $Lines
+}
+
+function Effective-Map {
+    param([string[]]$Lines)
+    $Result = @{}
+    foreach ($Line in $Lines) {
+        $Parts = $Line -split '\s+', 2
+        if ($Parts.Count -eq 2) { $Result[$Parts[0].ToLowerInvariant()] = $Parts[1] }
+    }
+    return $Result
 }
 
 $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $Principal = [Security.Principal.WindowsPrincipal]::new($Identity)
 if (-not $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'provision.ps1 must be run from an Administrator PowerShell'
+    throw 'forced-command provisioning requires Administrator Windows PowerShell'
 }
 if (-not [Environment]::Is64BitProcess -or $PSVersionTable.PSVersion.Major -ne 5) {
-    throw 'provision.ps1 requires 64-bit Windows PowerShell 5.1'
-}
-foreach ($Module in 'Microsoft.PowerShell.LocalAccounts','ScheduledTasks','NetTCPIP') {
-    if (-not (Get-Module -ListAvailable -Name $Module)) { throw "required PowerShell module is unavailable: $Module" }
+    throw 'forced-command provisioning requires 64-bit Windows PowerShell 5.1'
 }
 if (Get-Process SkyrimSE -ErrorAction SilentlyContinue) { throw 'refusing provisioning while SkyrimSE is running' }
-if (Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue) { throw 'SkyrimDeploy already exists; initial provisioning refuses partial state' }
-if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { throw 'deployment task already exists; initial provisioning refuses partial state' }
-if (Get-ScheduledTask -TaskName $SmokeTaskName -ErrorAction SilentlyContinue) { throw 'ACL smoke task already exists; initial provisioning refuses partial state' }
-if (Test-Path -LiteralPath $Stage) { throw 'deployment service stage already exists; initial provisioning refuses partial state' }
-if (Get-NetTCPConnection -LocalPort 7347 -State Listen -ErrorAction SilentlyContinue) { throw 'port 7347 already has a listener' }
-foreach ($Path in @($Source, $Config, $SmokeScript, $BatchRightScript, $Node)) {
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "required file does not exist: $Path" }
+$User = Get-LocalUser -Name $AccountName -ErrorAction Stop
+if (-not $User.Enabled -or $User.SID.Value -ne $ExpectedSid) { throw 'SkyrimDeploy does not match the diagnosed partial-provisioning SID' }
+$AdminMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop)
+if ($AdminMembers.SID.Value -contains $ExpectedSid) { throw 'SkyrimDeploy must not be an Administrator' }
+if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { throw 'deployment Scheduled Task unexpectedly exists' }
+if (Get-NetTCPConnection -LocalPort 7347 -State Listen -ErrorAction SilentlyContinue) { throw 'legacy deployment listener unexpectedly exists on port 7347' }
+$SshService = Get-CimInstance Win32_Service -Filter "Name='sshd'"
+if (-not $SshService -or $SshService.State -ne 'Running') { throw 'OpenSSH sshd service is not running' }
+if ($SshService.StartName -notmatch '^(?i:LocalSystem|NT AUTHORITY\\SYSTEM)$') {
+    throw "sshd is not running as LocalSystem: $($SshService.StartName)"
 }
-Assert-Hash $Source $ExpectedBridgeHash
+if ($SshService.PathName -notmatch [regex]::Escape($Sshd)) { throw "sshd service does not use pinned binary: $($SshService.PathName)" }
+$SshVersion = (& $Sshd '-V' 2>&1 | Out-String).Trim()
+if ($SshVersion -notmatch '(?i)OpenSSH_for_Windows_9\.5p2\b') { throw "expected OpenSSH_for_Windows_9.5p2: $SshVersion" }
+foreach ($Path in @($Worker,$Wrapper,$Config,$PublicKey,$SshConfig,$Sshd,$Node,$Stage,$BridgeDirectory,$BackupRoot)) {
+    if (-not (Test-Path -LiteralPath $Path)) { throw "required path is absent: $Path" }
+}
+Assert-Hash $Worker $ExpectedWorkerHash
+Assert-Hash $Wrapper $ExpectedWrapperHash
 Assert-Hash $Config $ExpectedConfigHash
-Assert-Hash $SmokeScript $ExpectedSmokeHash
-Assert-Hash $BatchRightScript $ExpectedBatchRightHash
-$NodeVersion = (& $Node --version)
-if ($LASTEXITCODE -ne 0 -or $NodeVersion -notmatch '^v([2-9][0-9]|[1-9][0-9]{2,})\.') { throw "Node 20+ is required: $NodeVersion" }
-& $Node --check $Source
-if ($LASTEXITCODE -ne 0) { throw 'Node syntax check failed' }
-
-$Parsed = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
-$TargetProperties = @($Parsed.targets.PSObject.Properties)
-$Registered = $Parsed.targets.'hoarfrost:development'
-if (
-    $Parsed.schema -ne 1 -or $Parsed.environment -ne 'assos' -or
-    $TargetProperties.Count -ne 1 -or $TargetProperties[0].Name -ne 'hoarfrost:development' -or
-    -not $Registered -or $Registered.project -ne 'hoarfrost' -or
-    $Registered.environment -ne 'assos' -or $Registered.target -ne 'development' -or
-    @($Registered.artifacts.PSObject.Properties).Count -ne 20 -or
-    $Parsed.backup_root -ne $BackupRoot
-) { throw 'generated config is not the exact pinned Hoarfrost/ASSOS/development allowlist' }
-$TargetRoot = [string]$Registered.root
-$ModsRoot = Split-Path -Parent $TargetRoot
-$AssosRoot = Split-Path -Parent $ModsRoot
-$TargetPluginRoot = Join-Path $TargetRoot 'SKSE\Plugins'
-if (
-    (Split-Path -Leaf $TargetRoot) -ne 'Hoarfrost - Development' -or
-    (Split-Path -Leaf $ModsRoot) -ne 'mods' -or
-    (Split-Path -Leaf $AssosRoot) -ne 'ASSOS'
-) { throw 'registered target does not have the required ASSOS/mods/development shape' }
-foreach ($Path in @($AssosRoot,$ModsRoot,$TargetRoot,$TargetPluginRoot)) {
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "registered directory does not exist: $Path" }
+Assert-Hash $PublicKey $ExpectedPublicKeyHash
+$NodeVersion = (& $Node '--version' 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $NodeVersion -notmatch '^v(?:2[0-9]|[3-9][0-9]|[1-9][0-9]{2,})\.[0-9]+\.[0-9]+$') {
+    throw "expected a pinned-path Node.js 20+ runtime: $NodeVersion"
+}
+foreach ($RuntimePath in @($Node, (Split-Path -Parent $Node), (Split-Path -Parent (Split-Path -Parent $Node)), $Stage, $BridgeDirectory)) {
+    Assert-NoBroadWriteAcl $RuntimePath
+}
+$NodeHash = (Get-FileHash -LiteralPath $Node -Algorithm SHA256).Hash.ToLowerInvariant()
+& $Node '--check' $Worker
+if ($LASTEXITCODE -ne 0) { throw 'deployment worker JavaScript syntax check failed' }
+$KeyLines = @(Get-Content -LiteralPath $PublicKey | Where-Object { $_.Trim() })
+if ($KeyLines.Count -ne 1 -or $KeyLines[0] -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: .*)?$') {
+    throw 'deployment public key must contain exactly one Ed25519 public key'
+}
+$BlockBegin = '# BEGIN SkyrimToolBridge project-deploy-v1'
+$BlockEnd = '# END SkyrimToolBridge project-deploy-v1'
+$LiveConfigText = [IO.File]::ReadAllText($SshConfig)
+$BeginCount = ([regex]::Matches($LiveConfigText, '(?m)^' + [regex]::Escape($BlockBegin) + '\r?$')).Count
+$EndCount = ([regex]::Matches($LiveConfigText, '(?m)^' + [regex]::Escape($BlockEnd) + '\r?$')).Count
+if ($BeginCount -ne $EndCount -or $BeginCount -gt 1) { throw 'managed SkyrimDeploy sshd block markers are ambiguous' }
+if ($BeginCount -eq 1) {
+    $ManagedPattern = '(?ms)^' + [regex]::Escape($BlockBegin) + '\r?\n.*?^' + [regex]::Escape($BlockEnd) + '\r?\n?'
+    $BaseConfigText = [regex]::Replace($LiveConfigText, $ManagedPattern, '')
+    if ($BaseConfigText -eq $LiveConfigText) { throw 'managed SkyrimDeploy sshd block could not be isolated for update' }
+} else {
+    $BaseConfigText = $LiveConfigText
+}
+$BaseActiveConfig = @($BaseConfigText -split '\r?\n' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') })
+if ($BaseActiveConfig -match '(?i)^\s*Match\s+User\s+.*\bskyrimdeploy\b') {
+    throw 'an unmanaged SkyrimDeploy sshd Match block exists; refusing ambiguous provisioning'
 }
 
-Write-Host '=== Create isolated non-admin identity ==='
-$Bytes = New-Object byte[] 48
-$Rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-try { $Rng.GetBytes($Bytes) } finally { $Rng.Dispose() }
-$PasswordText = [Convert]::ToBase64String($Bytes) + '!aA7'
-$Password = ConvertTo-SecureString $PasswordText -AsPlainText -Force
-$User = New-LocalUser -Name $AccountName -Password $Password -AccountNeverExpires `
-    -PasswordNeverExpires -UserMayNotChangePassword `
-    -Description 'Bounded Skyrim deployment bridge identity'
-$PasswordText = $null
-$UnexpectedGroups = @()
-foreach ($Group in Get-LocalGroup) {
-    $Members = @(Get-LocalGroupMember -Group $Group.Name -ErrorAction Stop)
-    if ($Members | Where-Object { $_.SID.Value -eq $User.SID.Value }) {
-        if ($Group.Name -ne 'Users') { $UnexpectedGroups += $Group.Name }
+Write-Host '=== Validate candidate sshd_config before any service change ==='
+$Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$Candidate = Join-Path $SshDirectory "sshd_config.project-deploy.$Stamp.candidate"
+$ConfigBackup = Join-Path $SshDirectory "sshd_config.project-deploy.$Stamp.bak"
+& $Sshd '-t' '-f' $SshConfig
+if ($LASTEXITCODE -ne 0) { throw 'baseline sshd_config failed syntax validation' }
+$ExistingUsers = @(
+    Get-LocalUser |
+    Where-Object { $_.Name -ine $AccountName } |
+    ForEach-Object { $_.Name.ToLowerInvariant() } |
+    Sort-Object -Unique
+)
+foreach ($RequiredExisting in @('hoarfrosttransfer','hoarfrostbuild')) {
+    if ($RequiredExisting -notin $ExistingUsers) { throw "required bounded SSH identity is absent: $RequiredExisting" }
+}
+$Baseline = @{}
+foreach ($ExistingUser in $ExistingUsers) {
+    $Baseline[$ExistingUser] = Invoke-SshdValidation $SshConfig $ExistingUser
+}
+$DeployBaseline = Invoke-SshdValidation $SshConfig $AccountName
+[IO.File]::WriteAllText($Candidate, $BaseConfigText.TrimEnd([char[]]"`r`n") + "`r`n", [Text.UTF8Encoding]::new($false))
+@(
+    '',
+    $BlockBegin,
+    '# Bounded Skyrim project deployment forced command',
+    'Match User skyrimdeploy',
+    '    AuthenticationMethods publickey',
+    '    PubkeyAuthentication yes',
+    '    PasswordAuthentication no',
+    '    KbdInteractiveAuthentication no',
+    '    PermitEmptyPasswords no',
+    '    AuthorizedKeysFile C:/ProgramData/SkyrimToolBridge/openssh/authorized_keys',
+    "    ForceCommand $ForceCommand",
+    '    DisableForwarding yes',
+    '    AllowTcpForwarding no',
+    '    AllowStreamLocalForwarding no',
+    '    AllowAgentForwarding no',
+    '    X11Forwarding no',
+    '    GatewayPorts no',
+    '    PermitTunnel no',
+    '    PermitOpen none',
+    '    PermitListen none',
+    '    PermitTTY no',
+    '    PermitUserEnvironment no',
+    '    PermitUserRC no',
+    '    MaxAuthTries 3',
+    '    MaxSessions 1',
+    '    ChannelTimeout session=600',
+    $BlockEnd
+) | Add-Content -LiteralPath $Candidate -Encoding Ascii
+& $Sshd '-t' '-f' $Candidate
+if ($LASTEXITCODE -ne 0) { throw 'candidate sshd_config failed syntax validation' }
+foreach ($ExistingUser in $ExistingUsers) {
+    $CandidateExisting = Invoke-SshdValidation $Candidate $ExistingUser
+    if (Compare-Object -ReferenceObject $Baseline[$ExistingUser] -DifferenceObject $CandidateExisting) {
+        throw "candidate changes effective sshd configuration for $ExistingUser"
     }
 }
-if ($UnexpectedGroups.Count -gt 0) { throw "unexpected SkyrimDeploy groups: $($UnexpectedGroups -join ', ')" }
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $BatchRightScript -ExpectedSid $User.SID.Value
-if ($LASTEXITCODE -ne 0) { throw "batch-right helper failed: $LASTEXITCODE" }
-
-Write-Host '=== Deny ASSOS writes, then isolate and allow only registered target ==='
-$DenyWrites = "${DeployAccount}:(OI)(CI)(WD,AD,WEA,DC,WA,DE)"
-$AllowTarget = "${DeployAccount}:(OI)(CI)(M)"
-Invoke-Icacls $AssosRoot '/deny' $DenyWrites
-Invoke-Icacls $TargetRoot '/inheritance:d'
-Invoke-Icacls $TargetRoot '/remove:d' $DeployAccount '/T' '/C'
-Invoke-Icacls $TargetRoot '/grant:r' $AllowTarget '/T' '/C'
-
-Write-Host '=== Create exact protected service/config ACLs ==='
-New-Item -ItemType Directory -Path $BridgeDirectory -Force | Out-Null
-New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
-Set-ExactDirectoryAcl $Stage ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
-Set-ExactDirectoryAcl $BridgeDirectory ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
-Set-ExactDirectoryAcl $BackupRoot ([System.Security.AccessControl.FileSystemRights]::Modify)
-Copy-Item -LiteralPath $Source -Destination $Destination
-Copy-Item -LiteralPath $Config -Destination $ConfigDestination
-Copy-Item -LiteralPath $SmokeScript -Destination $SmokeDestination
-Copy-Item -LiteralPath $BatchRightScript -Destination $BatchRightDestination
-foreach ($Pair in @(
-    @($Destination,$ExpectedBridgeHash),
-    @($ConfigDestination,$ExpectedConfigHash),
-    @($SmokeDestination,$ExpectedSmokeHash),
-    @($BatchRightDestination,$ExpectedBatchRightHash)
-)) {
-    Set-ExactFileAcl $Pair[0]
-    Assert-Hash $Pair[0] $Pair[1]
+$DeployEffective = Effective-Map (Invoke-SshdValidation $Candidate $AccountName)
+$ExpectedEffective = @{
+    pubkeyauthentication = 'yes'
+    passwordauthentication = 'no'
+    kbdinteractiveauthentication = 'no'
+    authenticationmethods = 'publickey'
+    authorizedkeysfile = 'C:/ProgramData/SkyrimToolBridge/openssh/authorized_keys'
+    forcecommand = $ForceCommand
+    disableforwarding = 'yes'
+    allowtcpforwarding = 'no'
+    allowstreamlocalforwarding = 'no'
+    allowagentforwarding = 'no'
+    x11forwarding = 'no'
+    gatewayports = 'no'
+    permittunnel = 'no'
+    permitopen = 'none'
+    permitlisten = 'none'
+    permittty = 'no'
+    permituserenvironment = 'no'
+    permituserrc = 'no'
+    permitemptypasswords = 'no'
+    maxauthtries = '3'
+    maxsessions = '1'
+    channeltimeout = 'session=600'
+    strictmodes = 'yes'
 }
-
-Write-Host '=== Register exact loopback bridge S4U task ==='
-$Action = New-ScheduledTaskAction -Execute $Node -Argument "`"$Destination`"" -WorkingDirectory $Stage
-$TaskPrincipal = New-ScheduledTaskPrincipal -UserId $DeployAccount -LogonType S4U -RunLevel Limited
-$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -ExecutionTimeLimit ([TimeSpan]::Zero)
-Register-ScheduledTask -TaskName $TaskName -TaskPath '\' -Action $Action -Principal $TaskPrincipal `
-    -Settings $Settings -Description 'Bounded Hoarfrost ASSOS deployment bridge' | Out-Null
-$Task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
-if (
-    $Task.TaskPath -ne '\' -or -not $Task.Settings.Enabled -or $Task.Triggers.Count -ne 0 -or
-    $Task.Principal.UserId -notin @($AccountName, $DeployAccount) -or $Task.Principal.LogonType -ne 'S4U' -or
-    $Task.Principal.RunLevel -ne 'Limited' -or $Task.Actions.Count -ne 1 -or
-    $Task.Actions[0].Execute -ne $Node -or $Task.Actions[0].Arguments -ne "`"$Destination`"" -or
-    $Task.Actions[0].WorkingDirectory -ne $Stage -or $Task.Settings.ExecutionTimeLimit -ne 'PT0S' -or
-    $Task.Settings.DisallowStartIfOnBatteries -or $Task.Settings.StopIfGoingOnBatteries
-) { throw 'registered service task does not match exact bounded definition' }
-Start-ScheduledTask -TaskName $TaskName
-$Listener = $null
-for ($Attempt=0; $Attempt -lt 20; $Attempt++) {
-    $Listener = Get-NetTCPConnection -LocalPort 7347 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($Listener) { break }
-    Start-Sleep 1
+foreach ($Name in $ExpectedEffective.Keys) {
+    if (-not $DeployEffective.ContainsKey($Name) -or $DeployEffective[$Name] -ine $ExpectedEffective[$Name]) {
+        throw "candidate SkyrimDeploy effective setting mismatch: $Name expected='$($ExpectedEffective[$Name])' actual='$($DeployEffective[$Name])'"
+    }
 }
-if (-not $Listener -or $Listener.LocalAddress -ne '127.0.0.1') { throw 'bridge did not become loopback-only within 20 seconds' }
-$Process = Get-CimInstance Win32_Process -Filter "ProcessId=$($Listener.OwningProcess)"
-$Owner = Invoke-CimMethod -InputObject $Process -MethodName GetOwner
-if ($Owner.User -ne $AccountName -or $Owner.Domain -ne ${env:COMPUTERNAME} -or
-    $Process.ExecutablePath -ne $Node -or $Process.CommandLine -notlike "*`"$Destination`"*") {
-    throw 'listener process identity/executable/command line is not pinned'
-}
-if ((Invoke-RestMethod 'http://127.0.0.1:7347/health').ok -ne $true) { throw 'local bridge health failed' }
+Write-Host 'Candidate syntax/effective validation passed; existing bounded users unchanged.'
 
-Write-Host '=== Run target/all-unrelated/protected-file effective ACL smoke ==='
-$SmokeToken = [Guid]::NewGuid().ToString('N')
-$SmokeResult = Join-Path $BackupRoot "acl-smoke-$SmokeToken.json"
-$PowerShell = "${env:SystemRoot}\System32\WindowsPowerShell\v1.0\powershell.exe"
-$SmokeArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$SmokeDestination`" " +
-    "-TargetPluginRoot `"$TargetPluginRoot`" -ModsRoot `"$ModsRoot`" -TargetRoot `"$TargetRoot`" " +
-    "-ConfigPath `"$ConfigDestination`" -BridgePath `"$Destination`" -Result `"$SmokeResult`""
-$SmokeAction = New-ScheduledTaskAction -Execute $PowerShell -Argument $SmokeArguments
+Write-Host '=== Snapshot rollback state ==='
+$RuntimeBackup = Join-Path $BackupRoot "provisioning-$Stamp"
+New-Item -ItemType Directory -Path $RuntimeBackup -Force | Out-Null
+$ManagedPaths = @($WorkerDestination,$WrapperDestination,$ConfigDestination,$AuthorizedKeys)
+$ManagedState = @()
+for ($Index = 0; $Index -lt $ManagedPaths.Count; $Index++) {
+    $ManagedPath = $ManagedPaths[$Index]
+    $Exists = Test-Path -LiteralPath $ManagedPath -PathType Leaf
+    $BackupPath = Join-Path $RuntimeBackup "managed-$Index.bin"
+    $Sddl = $null
+    $PriorHash = $null
+    if ($Exists) {
+        Copy-Item -LiteralPath $ManagedPath -Destination $BackupPath
+        $Sddl = (Get-Acl -LiteralPath $ManagedPath).Sddl
+        $PriorHash = (Get-FileHash -LiteralPath $ManagedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $ManagedState += [pscustomobject]@{
+        Path = $ManagedPath
+        Existed = $Exists
+        Backup = $BackupPath
+        Sddl = $Sddl
+        PriorHash = $PriorHash
+    }
+}
+$KeyDirectoryExisted = Test-Path -LiteralPath $KeyDirectory -PathType Container
+$KeyDirectorySddl = if ($KeyDirectoryExisted) { (Get-Acl -LiteralPath $KeyDirectory).Sddl } else { $null }
+Copy-Item -LiteralPath $SshConfig -Destination $ConfigBackup
+$OriginalHash = (Get-FileHash -LiteralPath $ConfigBackup -Algorithm SHA256).Hash
+$OriginalConfigSddl = (Get-Acl -LiteralPath $SshConfig).Sddl
+$RestrictedKey = "restrict,command=`"$ForceCommand`" $($KeyLines[0])"
+$RestrictedKeyBytes = [Text.UTF8Encoding]::new($false).GetBytes($RestrictedKey + "`n")
+$Sha256 = [Security.Cryptography.SHA256]::Create()
 try {
-    Register-ScheduledTask -TaskName $SmokeTaskName -Action $SmokeAction -Principal $TaskPrincipal `
-        -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10)) `
-        -Description 'One-shot bounded SkyrimDeploy ACL smoke' | Out-Null
-    Start-ScheduledTask -TaskName $SmokeTaskName
-    for ($Attempt=0; $Attempt -lt 120; $Attempt++) {
-        $SmokeState = (Get-ScheduledTask -TaskName $SmokeTaskName).State
-        if ($SmokeState -ne 'Running' -and (Test-Path -LiteralPath $SmokeResult -PathType Leaf)) { break }
+    $ExpectedAuthorizedKeyHash = ([BitConverter]::ToString($Sha256.ComputeHash($RestrictedKeyBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+    $Sha256.Dispose()
+}
+$ExpectedManagedHashes = @{}
+$ExpectedManagedHashes[$WorkerDestination] = $ExpectedWorkerHash
+$ExpectedManagedHashes[$WrapperDestination] = $ExpectedWrapperHash
+$ExpectedManagedHashes[$ConfigDestination] = $ExpectedConfigHash
+$ExpectedManagedHashes[$AuthorizedKeys] = $ExpectedAuthorizedKeyHash
+$InstalledConfigHash = $null
+
+Write-Host '=== Install protected runtime, key, and validated sshd config ==='
+try {
+    Copy-Item -LiteralPath $Worker -Destination $WorkerDestination -Force
+    Copy-Item -LiteralPath $Wrapper -Destination $WrapperDestination -Force
+    Copy-Item -LiteralPath $Config -Destination $ConfigDestination -Force
+    New-Item -ItemType Directory -Path $KeyDirectory -Force | Out-Null
+    Set-KeyDirectoryAcl $KeyDirectory
+    [IO.File]::WriteAllText($AuthorizedKeys, $RestrictedKey + "`n", [Text.UTF8Encoding]::new($false))
+    Set-ProtectedFileAcl $WorkerDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    Set-ProtectedFileAcl $WrapperDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    Set-ProtectedFileAcl $ConfigDestination ([System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    Set-KeyFileAcl $AuthorizedKeys
+    Assert-Hash $WorkerDestination $ExpectedWorkerHash
+    Assert-Hash $WrapperDestination $ExpectedWrapperHash
+    Assert-Hash $ConfigDestination $ExpectedConfigHash
+    if ((Get-Content -LiteralPath $AuthorizedKeys -Raw) -ne ($RestrictedKey + "`n")) {
+        throw 'installed restricted authorized key content mismatch'
+    }
+
+    Copy-Item -LiteralPath $Candidate -Destination $SshConfig -Force
+    $InstalledConfigHash = (Get-FileHash -LiteralPath $SshConfig -Algorithm SHA256).Hash.ToLowerInvariant()
+    & $Sshd '-t' '-f' $SshConfig
+    if ($LASTEXITCODE -ne 0) { throw 'installed sshd_config failed syntax validation' }
+    Restart-Service sshd -ErrorAction Stop
+    $Healthy = $false
+    for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
+        $Service = Get-Service sshd
+        $Listener = Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($Service.Status -eq 'Running' -and $Listener) { $Healthy = $true; break }
         Start-Sleep 1
     }
-    $SmokeInfo = Get-ScheduledTaskInfo -TaskName $SmokeTaskName
-    if ($SmokeInfo.LastTaskResult -ne 0 -or -not (Test-Path -LiteralPath $SmokeResult -PathType Leaf)) {
-        throw "ACL smoke task failed: result=$($SmokeInfo.LastTaskResult)"
+    if (-not $Healthy) { throw 'sshd did not return healthy with a port 22 listener within 20 seconds' }
+    foreach ($ExistingUser in $ExistingUsers) {
+        $InstalledExisting = Invoke-SshdValidation $SshConfig $ExistingUser
+        if (Compare-Object -ReferenceObject $Baseline[$ExistingUser] -DifferenceObject $InstalledExisting) {
+            throw "installed config changes effective sshd behavior for $ExistingUser"
+        }
     }
-    $Smoke = Get-Content -LiteralPath $SmokeResult -Raw | ConvertFrom-Json
-    $Smoke | ConvertTo-Json -Depth 4
-    if ($Smoke.identity -ne $DeployAccount -or -not $Smoke.target_write -or -not $Smoke.target_removed -or
-        $Smoke.unrelated_count -lt 1 -or -not $Smoke.unrelated_refused -or
-        -not $Smoke.config_write_open_refused -or -not $Smoke.bridge_write_open_refused) {
-        throw 'effective ACL smoke report failed'
+    $InstalledDeploy = Effective-Map (Invoke-SshdValidation $SshConfig $AccountName)
+    foreach ($Name in $ExpectedEffective.Keys) {
+        if (-not $InstalledDeploy.ContainsKey($Name) -or $InstalledDeploy[$Name] -ine $ExpectedEffective[$Name]) {
+            throw "installed SkyrimDeploy effective setting mismatch after restart: $Name"
+        }
     }
+} catch {
+    $Failure = $_
+    $RollbackErrors = @()
+    try {
+        Stop-Service sshd -Force -ErrorAction Stop
+        for ($Attempt = 0; $Attempt -lt 20 -and (Get-Service sshd).Status -ne 'Stopped'; $Attempt++) { Start-Sleep 1 }
+        if ((Get-Service sshd).Status -ne 'Stopped') { throw 'sshd did not reach Stopped before rollback restore' }
+    } catch { $RollbackErrors += "stop/wait sshd: $($_.Exception.Message)" }
+    try {
+        $CurrentConfigHash = (Get-FileHash -LiteralPath $SshConfig -Algorithm SHA256).Hash.ToLowerInvariant()
+        $OriginalConfigHash = $OriginalHash.ToLowerInvariant()
+        if ($CurrentConfigHash -ne $OriginalConfigHash -and
+            (-not $InstalledConfigHash -or $CurrentConfigHash -ne $InstalledConfigHash)) {
+            throw "sshd_config changed outside this provisioning transaction; refusing rollback overwrite: $CurrentConfigHash"
+        }
+        Copy-Item -LiteralPath $ConfigBackup -Destination $SshConfig -Force
+        $Acl = Get-Acl -LiteralPath $SshConfig
+        $Acl.SetSecurityDescriptorSddlForm($OriginalConfigSddl)
+        Set-Acl -LiteralPath $SshConfig -AclObject $Acl
+        & $Sshd '-t' '-f' $SshConfig
+        if ($LASTEXITCODE -ne 0) { throw 'restored sshd_config failed syntax validation' }
+    } catch { $RollbackErrors += "restore sshd_config: $($_.Exception.Message)" }
+    foreach ($State in $ManagedState) {
+        try {
+            if (Test-Path -LiteralPath $State.Path -PathType Leaf) {
+                $CurrentManagedHash = (Get-FileHash -LiteralPath $State.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+                $ExpectedManagedHash = $ExpectedManagedHashes[$State.Path]
+                if ($CurrentManagedHash -ne $ExpectedManagedHash -and
+                    (-not $State.PriorHash -or $CurrentManagedHash -ne $State.PriorHash)) {
+                    throw "managed file changed outside this provisioning transaction; refusing rollback overwrite: $($State.Path) hash=$CurrentManagedHash"
+                }
+            }
+            if ($State.Existed) {
+                Copy-Item -LiteralPath $State.Backup -Destination $State.Path -Force
+                $Acl = Get-Acl -LiteralPath $State.Path
+                $Acl.SetSecurityDescriptorSddlForm($State.Sddl)
+                Set-Acl -LiteralPath $State.Path -AclObject $Acl
+            } else {
+                Remove-Item -LiteralPath $State.Path -Force -ErrorAction SilentlyContinue
+            }
+        } catch { $RollbackErrors += "restore $($State.Path): $($_.Exception.Message)" }
+    }
+    if (-not $KeyDirectoryExisted) {
+        try { Remove-Item -LiteralPath $KeyDirectory -Force -ErrorAction Stop } catch { $RollbackErrors += "remove key directory: $($_.Exception.Message)" }
+    } elseif ($KeyDirectorySddl) {
+        try {
+            $Acl = Get-Acl -LiteralPath $KeyDirectory
+            $Acl.SetSecurityDescriptorSddlForm($KeyDirectorySddl)
+            Set-Acl -LiteralPath $KeyDirectory -AclObject $Acl
+        } catch { $RollbackErrors += "restore key directory ACL: $($_.Exception.Message)" }
+    }
+    try {
+        Start-Service sshd -ErrorAction Stop
+        for ($Attempt = 0; $Attempt -lt 20 -and (Get-Service sshd).Status -ne 'Running'; $Attempt++) { Start-Sleep 1 }
+        if ((Get-Service sshd).Status -ne 'Running') { throw 'restored sshd did not reach Running' }
+        $RestoredListener = Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $RestoredListener) { throw 'restored sshd has no port 22 listener' }
+        foreach ($ExistingUser in $ExistingUsers) {
+            if (Compare-Object $Baseline[$ExistingUser] (Invoke-SshdValidation $SshConfig $ExistingUser)) {
+                throw "restored effective config differs for $ExistingUser"
+            }
+        }
+        if (Compare-Object $DeployBaseline (Invoke-SshdValidation $SshConfig $AccountName)) {
+            throw 'restored effective config differs for SkyrimDeploy'
+        }
+    } catch { $RollbackErrors += "restart/validate restored sshd: $($_.Exception.Message)" }
+    if ($RollbackErrors.Count -gt 0) {
+        throw "provisioning failed: $($Failure.Exception.Message); ROLLBACK FAILED: $($RollbackErrors -join '; ')"
+    }
+    throw "provisioning failed and all managed state was restored: $($Failure.Exception.Message)"
 } finally {
-    Unregister-ScheduledTask -TaskName $SmokeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $Candidate -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host '=== Local provisioning successful; Tailscale remains unchanged ==='
-Write-Host "Listener: 127.0.0.1:7347 owner=$DeployAccount"
-Write-Host "Registered target smoke: write/hash/remove passed at $TargetPluginRoot"
-Write-Host "All unrelated mod roots refused: $($Smoke.unrelated_count)"
-Write-Host 'Protected config and bridge write-open attempts refused'
-Write-Host "ACL smoke evidence: $SmokeResult"
+$InstalledHash = (Get-FileHash -LiteralPath $SshConfig -Algorithm SHA256).Hash
+Write-Host '=== Forced-command provisioning complete; remote smoke still required ==='
+Write-Host "Original sshd_config SHA256: $OriginalHash"
+Write-Host "Installed sshd_config SHA256: $InstalledHash"
+Write-Host "Node.js runtime: $NodeVersion SHA256=$NodeHash"
+Write-Host "Backup: $ConfigBackup"
+Write-Host "Runtime backup: $RuntimeBackup"
+Write-Host "Authorized key: $AuthorizedKeys"
+Write-Host 'No Scheduled Task, port 7347 listener, Tailscale route, or candidate deployment was created.'

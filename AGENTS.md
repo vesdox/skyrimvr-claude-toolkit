@@ -156,3 +156,11 @@ boundaries, this `AGENTS.md` is authoritative.
 
 The long-term direction is to move genuinely shared material out of `CLAUDE.md` and
 leave only Claude-specific integration there.
+
+## Filesystem search safety
+
+- Do not recursively search `/home/wodox/skyrim-dev` as a whole by default.
+- `/home/wodox/skyrim-dev/windows-ro` contains remote CIFS/SMB evidence mounts over Tailscale. Broad `find`, `rg`, `grep`, `xargs`, or similar recursive searches across that tree can cause heavy network I/O and CPU I/O wait.
+- Prefer the narrowest relevant local scope first, such as the current repository, `/home/wodox/skyrim-dev/reference/mod-sources`, or a named artifact/source directory.
+- Search `/home/wodox/skyrim-dev/windows-ro` only when Windows-side evidence is specifically required, and then search only the named mount/subdirectory needed for the task.
+- Never use an unbounded command such as `find /home/wodox/skyrim-dev -type f ...` merely to locate likely project/reference evidence.

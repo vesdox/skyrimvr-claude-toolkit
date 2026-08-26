@@ -6,14 +6,18 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import select
+import struct
+import subprocess
 import sys
+import tempfile
+import time
 import tomllib
-import urllib.error
-import urllib.parse
-import urllib.request
+import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from capability_registry import (
@@ -28,6 +32,8 @@ ENVIRONMENTS_DIR = ROOT / "environments"
 CAPABILITIES_DIR = ROOT / "capabilities"
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 DIRECT_BINARY_MOD_EXTENSIONS = {".esp", ".esm", ".esl", ".bsa", ".ba2"}
+PROTOCOL_MAGIC = b"HFDEPLOY1\0"
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 class DeployError(RuntimeError):
@@ -331,53 +337,189 @@ def evidence_destination(environment: dict, target: dict, relative: str) -> Path
     return destination
 
 
-def bridge_url(environment: dict) -> str:
+def ssh_bridge_config(environment: dict) -> dict:
     bridge = environment.get("bridges", {}).get("project_deploy", {})
-    if bridge.get("protocol") != "project-deploy-v1":
-        raise DeployError("environment deployment bridge protocol is not project-deploy-v1")
-    value = bridge.get("url")
-    if not isinstance(value, str) or not value:
-        raise DeployError("environment has no registered project deployment bridge URL")
-    value = value.rstrip("/")
-    parsed = urllib.parse.urlparse(value)
+    if bridge.get("protocol") != "project-deploy-ssh-v1":
+        raise DeployError("environment deployment bridge protocol is not project-deploy-ssh-v1")
+    host = bridge.get("host")
+    port = bridge.get("port")
+    user = bridge.get("user")
+    command = bridge.get("command")
+    identity_value = bridge.get("identity_file")
+    known_hosts_value = bridge.get("known_hosts_file")
+    host_key_sha256 = bridge.get("host_key_sha256")
+    if not all(isinstance(value, str) and value for value in (
+        host, user, command, identity_value, known_hosts_value, host_key_sha256
+    )):
+        raise DeployError("environment has an incomplete project deployment SSH bridge registration")
+    try:
+        ipaddress.ip_address(host)
+        valid_host = True
+    except ValueError:
+        valid_host = host.lower().endswith(".ts.net") and not any(c in host for c in "/\\:@\r\n")
+    if not valid_host or port != 22 or user != "SkyrimDeploy" or command != "project-deploy-v1":
+        raise DeployError("environment project deployment SSH bridge is not the exact bounded endpoint")
+    identity = Path(identity_value).expanduser().resolve()
+    known_hosts = Path(known_hosts_value).expanduser().resolve()
+    for label, filename in (("identity", identity), ("known-hosts", known_hosts)):
+        if not filename.is_file():
+            raise DeployError(f"dedicated SkyrimDeploy SSH {label} file is absent: {filename}")
+        mode = filename.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise DeployError(f"dedicated SkyrimDeploy SSH {label} permissions are too broad: {oct(mode)}")
+    host_lines = [line for line in known_hosts.read_text(errors="strict").splitlines() if line.strip()]
+    if len(host_lines) != 1:
+        raise DeployError("dedicated project deployment known-hosts file must contain exactly one key")
+    host_fields = host_lines[0].split()
     if (
-        parsed.scheme != "https"
-        or not parsed.hostname
-        or not parsed.hostname.lower().endswith(".ts.net")
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or parsed.path not in ("/project-deploy",)
+        len(host_fields) < 3
+        or host_fields[0] != host
+        or host_fields[1] != "ssh-ed25519"
     ):
-        raise DeployError(
-            "project deployment bridge must be an HTTPS Tailscale .ts.net /project-deploy URL"
-        )
-    return value
-
-
-def post_json(url: str, body: dict, timeout: int = 120) -> dict:
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        method="POST",
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        raise DeployError("dedicated project deployment known-hosts key is not bound to the exact endpoint")
+    fingerprint = subprocess.run(
+        ["ssh-keygen", "-lf", str(known_hosts)],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise DeployError(f"deployment bridge returned HTTP {exc.code}: {detail[:2000]}") from exc
-    except urllib.error.URLError as exc:
-        raise DeployError(f"could not reach deployment bridge: {exc.reason}") from exc
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise DeployError("deployment bridge returned invalid JSON") from exc
-    if not isinstance(result, dict) or result.get("ok") is not True:
-        raise DeployError(f"deployment bridge rejected the request: {result.get('error', 'unknown error')}")
-    return result
+    if fingerprint.returncode != 0 or host_key_sha256 not in fingerprint.stdout.split():
+        raise DeployError("dedicated project deployment known-hosts key does not match its registry pin")
+    return {
+        "host": host, "port": port, "user": user, "command": command, "identity": identity,
+        "known_hosts": known_hosts, "host_key_sha256": host_key_sha256,
+    }
+
+
+class SshBridgeSession:
+    def __init__(self, bridge: dict, timeout: int = 120):
+        self.timeout = timeout
+        self._received_magic = False
+        self._stderr = tempfile.TemporaryFile(mode="w+b")
+        argv = [
+            "ssh", "-T", "-oBatchMode=yes", "-oIdentitiesOnly=yes",
+            "-oStrictHostKeyChecking=yes", f'-oUserKnownHostsFile={bridge["known_hosts"]}',
+            "-oHostKeyAlgorithms=ssh-ed25519", "-oPasswordAuthentication=no",
+            "-oKbdInteractiveAuthentication=no", "-oPreferredAuthentications=publickey",
+            "-oClearAllForwardings=yes", "-oRequestTTY=no", "-oConnectTimeout=15",
+            "-p", str(bridge["port"]), "-i", str(bridge["identity"]),
+            f'{bridge["user"]}@{bridge["host"]}',
+            bridge["command"],
+        ]
+        try:
+            self.process = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=self._stderr,
+                shell=False,
+                bufsize=0,
+            )
+        except OSError as exc:
+            self._stderr.close()
+            raise DeployError(f"could not start dedicated deployment SSH transport: {exc}") from exc
+        assert self.process.stdin is not None
+        self.process.stdin.write(PROTOCOL_MAGIC)
+        self.process.stdin.flush()
+
+    def _read_exact(self, length: int, timeout: int) -> bytes:
+        if self.process.stdout is None:
+            raise DeployError("deployment SSH stdout is unavailable")
+        result = bytearray()
+        deadline = time.monotonic() + timeout
+        while len(result) < length:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.abort()
+                raise DeployError(f"deployment SSH transport timed out after {timeout} seconds")
+            ready, _, _ = select.select([self.process.stdout], [], [], remaining)
+            if not ready:
+                continue
+            chunk = os.read(self.process.stdout.fileno(), length - len(result))
+            if not chunk:
+                raise DeployError(self._failure("deployment SSH transport returned truncated output"))
+            result.extend(chunk)
+        return bytes(result)
+
+    def request(self, body: dict, timeout: int | None = None) -> dict:
+        if self.process.stdin is None:
+            raise DeployError("deployment SSH stdin is unavailable")
+        if self.process.poll() is not None:
+            raise DeployError(self._failure("deployment SSH transport exited before request"))
+        payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        if len(payload) > 180 * 1024 * 1024:
+            raise DeployError("deployment request frame exceeds 180 MiB")
+        self.process.stdin.write(struct.pack(">I", len(payload)))
+        self.process.stdin.write(payload)
+        self.process.stdin.flush()
+        wait = self.timeout if timeout is None else timeout
+        if not self._received_magic:
+            magic = self._read_exact(len(PROTOCOL_MAGIC), wait)
+            if magic != PROTOCOL_MAGIC:
+                raise DeployError("deployment SSH stdout was contaminated before protocol magic")
+            self._received_magic = True
+        length = struct.unpack(">I", self._read_exact(4, wait))[0]
+        if length < 2 or length > MAX_RESPONSE_BYTES:
+            raise DeployError(f"deployment SSH response frame has invalid length: {length}")
+        raw = self._read_exact(length, wait)
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise DeployError("deployment SSH transport returned invalid framed JSON") from exc
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            error = result.get("error", "unknown error") if isinstance(result, dict) else "non-object result"
+            raise DeployError(f"deployment worker rejected the request: {error}")
+        if result.get("operation") != body.get("operation"):
+            raise DeployError("deployment SSH response operation does not match its request")
+        request_id = result.get("request_id")
+        try:
+            parsed_request_id = uuid.UUID(request_id)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise DeployError("deployment SSH response has no valid request id") from exc
+        if str(parsed_request_id) != request_id:
+            raise DeployError("deployment SSH response request id is not canonical")
+        return result
+
+    def finish(self) -> None:
+        if self.process.stdin is not None and not self.process.stdin.closed:
+            self.process.stdin.close()
+        try:
+            code = self.process.wait(timeout=30)
+        except subprocess.TimeoutExpired as exc:
+            self.abort()
+            raise DeployError("deployment SSH transport did not exit after the fixed request") from exc
+        if code != 0:
+            raise DeployError(self._failure(f"deployment SSH transport exited with status {code}"))
+        self._stderr.close()
+
+    def abort(self) -> None:
+        if self.process.poll() is None:
+            self.process.kill()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        self._stderr.close()
+
+    def _failure(self, prefix: str) -> str:
+        self._stderr.flush()
+        self._stderr.seek(0)
+        detail = self._stderr.read(2000).decode("utf-8", errors="replace").strip()
+        return f"{prefix}: {detail}" if detail else prefix
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        if exc_type is None:
+            self.finish()
+        else:
+            self.abort()
+
+
+def protocol_request(operation: str, body: dict) -> dict:
+    return {"protocol": "project-deploy-v1", "operation": operation, **body}
 
 
 def request_payload(project_id: str, environment_id: str, target_id: str, artifacts: list[dict]) -> dict:
@@ -432,44 +574,47 @@ def apply_deployment(
     target: dict,
     artifacts: list[dict],
 ) -> None:
-    base = bridge_url(environment)
-    plan = post_json(f"{base}/plan", request_payload(project_id, environment_id, target_id, artifacts))
-    before = plan.get("artifacts")
-    if not isinstance(before, list) or len(before) != len(artifacts):
-        raise DeployError("deployment bridge returned an incomplete plan")
+    bridge = ssh_bridge_config(environment)
+    with SshBridgeSession(bridge) as session:
+        plan = session.request(protocol_request(
+            "plan", request_payload(project_id, environment_id, target_id, artifacts)
+        ))
+        before = plan.get("artifacts")
+        if not isinstance(before, list) or len(before) != len(artifacts):
+            raise DeployError("deployment bridge returned an incomplete plan")
 
-    before_by_id = {item.get("id"): item for item in before}
-    if len(before_by_id) != len(before):
-        raise DeployError("deployment bridge returned duplicate artifact ids")
-    for artifact in artifacts:
-        item = before_by_id.get(artifact["id"])
-        if item is None:
-            raise DeployError(f"deployment bridge omitted artifact {artifact['id']}")
-        if item.get("source_sha256") != artifact["sha256"]:
-            raise DeployError(f"deployment bridge source hash mismatch for {artifact['id']}")
-        expected_destination = windows_destination(environment, target, artifact["destination"])
-        if str(item.get("destination", "")).casefold() != expected_destination.casefold():
-            raise DeployError(f"deployment bridge destination mismatch for {artifact['id']}")
-        print_source(environment, target, artifact)
-        print(f"  bridge existing:    {item.get('destination')}")
-        print(f"  existing SHA256:    {item.get('existing_sha256') or 'absent'}")
-        print()
+        before_by_id = {item.get("id"): item for item in before}
+        if len(before_by_id) != len(before):
+            raise DeployError("deployment bridge returned duplicate artifact ids")
+        for artifact in artifacts:
+            item = before_by_id.get(artifact["id"])
+            if item is None:
+                raise DeployError(f"deployment bridge omitted artifact {artifact['id']}")
+            if item.get("source_sha256") != artifact["sha256"]:
+                raise DeployError(f"deployment bridge source hash mismatch for {artifact['id']}")
+            expected_destination = windows_destination(environment, target, artifact["destination"])
+            if str(item.get("destination", "")).casefold() != expected_destination.casefold():
+                raise DeployError(f"deployment bridge destination mismatch for {artifact['id']}")
+            print_source(environment, target, artifact)
+            print(f"  bridge existing:    {item.get('destination')}")
+            print(f"  existing SHA256:    {item.get('existing_sha256') or 'absent'}")
+            print()
 
-    token = plan.get("token")
-    if not isinstance(token, str) or not token:
-        raise DeployError("deployment bridge returned no plan token")
-    body = {
-        "token": token,
-        "artifacts": [
-            {
-                "id": item["id"],
-                "sha256": item["sha256"],
-                "content_base64": base64.b64encode(item["source"].read_bytes()).decode("ascii"),
-            }
-            for item in artifacts
-        ],
-    }
-    result = post_json(f"{base}/apply", body, timeout=300)
+        token = plan.get("token")
+        if not isinstance(token, str) or not token:
+            raise DeployError("deployment bridge returned no plan token")
+        body = {
+            "token": token,
+            "artifacts": [
+                {
+                    "id": item["id"],
+                    "sha256": item["sha256"],
+                    "content_base64": base64.b64encode(item["source"].read_bytes()).decode("ascii"),
+                }
+                for item in artifacts
+            ],
+        }
+        result = session.request(protocol_request("apply", body), timeout=300)
     deployed = result.get("artifacts")
     if not isinstance(deployed, list) or len(deployed) != len(artifacts):
         raise DeployError("deployment bridge returned an incomplete result")
