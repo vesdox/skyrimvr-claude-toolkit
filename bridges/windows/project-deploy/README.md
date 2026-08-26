@@ -96,10 +96,14 @@ ASSOS ACLs. Before changing the live service it:
    configurations without Administrator-side `sshd -T -C user=...` evaluation;
 4. verifies the existing `HoarfrostTransfer` and `HoarfrostBuild` local identities
    remain present while leaving their configuration bytes untouched;
-5. defers effective forced-command and existing-identity semantics to live SSH through
+5. statically rejects active global `PermitUserEnvironment yes` (and unresolved global
+   includes), relying on the pinned OpenSSH 9.5p2 default of `no` when absent; the
+   generated Match block contains only directives marked `SSHCFG_ALL` by that pinned
+   source and the packaged `sshd.exe -t` remains authoritative;
+6. defers effective forced-command and existing-identity semantics to live SSH through
    the actual LocalSystem sshd service;
-6. backs up runtime files and `sshd_config`, installs exact ACLs, and restarts sshd;
-7. restores compare-and-swap-validated original state, waits for sshd transitions,
+7. backs up runtime files and `sshd_config`, installs exact ACLs, and restarts sshd;
+8. restores compare-and-swap-validated original state, waits for sshd transitions,
    and revalidates the restored port-22 service if activation/health checks fail.
 
 The packaged Node runtime is extracted from the official `node-v24.15.0-win-x64.zip`.

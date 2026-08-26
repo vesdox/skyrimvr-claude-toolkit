@@ -427,7 +427,6 @@ $ManagedLines = @(
     '    PermitOpen none',
     '    PermitListen none',
     '    PermitTTY no',
-    '    PermitUserEnvironment no',
     '    PermitUserRC no',
     '    MaxAuthTries 3',
     '    MaxSessions 1',
@@ -474,6 +473,24 @@ $BaseActiveConfig = @($BaseConfigText -split '\r?\n' | Where-Object { $_.Trim() 
 if ($BaseActiveConfig -match '(?i)^\s*Match\s+User\s+.*\bskyrimdeploy\b') {
     throw 'an unmanaged SkyrimDeploy sshd Match block exists; refusing ambiguous provisioning'
 }
+$GlobalPermitUserEnvironment = @()
+foreach ($ConfigLine in ($BaseConfigText -split '\r?\n')) {
+    $ActiveLine = ($ConfigLine -replace '\s+#.*$', '').Trim()
+    if (-not $ActiveLine -or $ActiveLine.StartsWith('#')) { continue }
+    if ($ActiveLine -match '(?i)^Match(?:\s|$)') { break }
+    if ($ActiveLine -match '(?i)^Include(?:\s|$)') {
+        throw 'global sshd Include prevents static PermitUserEnvironment policy inspection'
+    }
+    if ($ActiveLine -match '(?i)^PermitUserEnvironment\s+(\S+)\s*$') {
+        $GlobalPermitUserEnvironment += $Matches[1].ToLowerInvariant()
+    }
+}
+if ($GlobalPermitUserEnvironment -contains 'yes') {
+    throw 'active global PermitUserEnvironment yes is incompatible with the SkyrimDeploy boundary'
+}
+if (@($GlobalPermitUserEnvironment | Where-Object { $_ -ne 'no' }).Count -ne 0) {
+    throw 'active global PermitUserEnvironment has an unsupported value'
+}
 $Separator = if ($BaseConfigBytes.Length -gt 0 -and $BaseConfigBytes[$BaseConfigBytes.Length - 1] -eq 10) { '' } else { "`r`n" }
 $AppendBytes = $Ascii.GetBytes($Separator + $ManagedBlockText)
 $CandidateBytes = [byte[]]@($BaseConfigBytes + $AppendBytes)
@@ -492,7 +509,12 @@ if (([regex]::Matches($CandidateText, '(?im)^\s*Match\s+User\s+skyrimdeploy\s*$'
     throw 'candidate does not contain exactly one structural SkyrimDeploy Match User line'
 }
 & $Sshd '-t' '-f' $Candidate
-if ($LASTEXITCODE -ne 0) { throw 'candidate sshd_config failed syntax validation' }
+if ($LASTEXITCODE -ne 0) {
+    try { Remove-Item -LiteralPath $Candidate -Force -ErrorAction Stop } catch {
+        throw "candidate sshd_config failed syntax validation and cleanup failed: $($_.Exception.Message)"
+    }
+    throw 'candidate sshd_config failed syntax validation; candidate was removed'
+}
 Write-Host 'Candidate syntax, byte preservation, and exact managed-block validation passed; live SSH smoke remains required.'
 
 Write-Host '=== Snapshot rollback state ==='
@@ -533,6 +555,7 @@ Copy-Item -LiteralPath $SshConfig -Destination $ConfigBackup
 $OriginalHash = (Get-FileHash -LiteralPath $ConfigBackup -Algorithm SHA256).Hash
 $OriginalConfigSddl = (Get-Acl -LiteralPath $SshConfig).Sddl
 $RestrictedKey = "restrict,command=`"$ForceCommand`" $($KeyLines[0])"
+if ($RestrictedKey -match '(?i)(?:^|,)environment=') { throw 'dedicated authorized key must not contain an environment option' }
 $RestrictedKeyBytes = [Text.UTF8Encoding]::new($false).GetBytes($RestrictedKey + "`n")
 $Sha256 = [Security.Cryptography.SHA256]::Create()
 try {

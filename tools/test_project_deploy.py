@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -109,6 +110,21 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertIn("Assert-ProtectedPathIntegrity $PowerShell 'C:\\Windows'", provision)
         self.assertIn("C:/Program Files/SkyrimDeployBridge/openssh/authorized_keys", provision)
         self.assertIn("-EncodedCommand $ForceCommandEncoded", provision)
+        self.assertNotIn("PermitUserEnvironment no", provision)
+        self.assertIn("active global PermitUserEnvironment yes is incompatible", provision)
+        self.assertIn("global sshd Include prevents static PermitUserEnvironment policy inspection", provision)
+        managed = re.search(r"\$ManagedLines = @\((.*?)\n\)", provision, re.DOTALL)
+        self.assertIsNotNone(managed)
+        match_directives = set(re.findall(r"['\"]    ([A-Za-z0-9]+)", managed.group(1)))
+        # OpenSSH_for_Windows_9.5p2 servconf.c marks each of these SSHCFG_ALL.
+        self.assertEqual(match_directives, {
+            "AuthenticationMethods", "PubkeyAuthentication", "PasswordAuthentication",
+            "KbdInteractiveAuthentication", "PermitEmptyPasswords", "AuthorizedKeysFile",
+            "ForceCommand", "DisableForwarding", "AllowTcpForwarding",
+            "AllowStreamLocalForwarding", "AllowAgentForwarding", "X11Forwarding",
+            "GatewayPorts", "PermitTunnel", "PermitOpen", "PermitListen", "PermitTTY",
+            "PermitUserRC", "MaxAuthTries", "MaxSessions", "ChannelTimeout",
+        })
         self.assertNotIn("C:/ProgramData/SkyrimToolBridge/project-deploy/invoke-ssh.ps1", provision)
         self.assertIn("$ManagedDirectories = @($ProtectedRoot,$BridgeDirectory,$RuntimeDirectory,$KeyDirectory)", provision)
         self.assertIn("for ($Index = $DirectoryState.Count - 1; $Index -ge 0; $Index--)", provision)
