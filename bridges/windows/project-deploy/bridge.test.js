@@ -10,7 +10,9 @@ const {
   beneath,
   validateArtifactRequest,
   readFrame,
-  writeFrame
+  writeFrame,
+  proveUnrelatedWriteRefused,
+  appendAndVerifyAudit
 } = require('./bridge.js');
 
 test('normalizes only safe relative deployment paths', () => {
@@ -65,6 +67,50 @@ test('forced-command frames reject truncation, invalid JSON, and invalid lengths
     fs.closeSync(input);
   }
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('audit append is durably read back as the exact record', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'project-deploy-audit-'));
+  const filename = path.join(directory, 'project-deploy.ndjson');
+  const record = JSON.stringify({ request_id: 'current-request', operation: 'smoke' });
+  appendAndVerifyAudit(filename, record);
+  assert.equal(fs.readFileSync(filename, 'utf8'), `${record}\r\n`);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('unrelated write proof cannot turn successful creation into refusal', async () => {
+  const originalWriteFile = fs.promises.writeFile;
+  const originalLstat = fs.promises.lstat;
+  const originalRm = fs.promises.rm;
+  try {
+    fs.promises.writeFile = async () => { const error = new Error('denied'); error.code = 'EACCES'; throw error; };
+    fs.promises.lstat = async () => { const error = new Error('absent'); error.code = 'ENOENT'; throw error; };
+    assert.equal(await proveUnrelatedWriteRefused('D:\\mods\\Other\\probe.tmp'), true);
+
+    fs.promises.writeFile = async () => {};
+    fs.promises.rm = async () => {};
+    await assert.rejects(
+      proveUnrelatedWriteRefused('D:\\mods\\Other\\probe.tmp'),
+      /unrelated mod write unexpectedly succeeded: D:\\mods\\Other\\probe\.tmp/
+    );
+
+    fs.promises.rm = async () => { const error = new Error('cleanup denied'); error.code = 'EACCES'; throw error; };
+    await assert.rejects(
+      proveUnrelatedWriteRefused('D:\\mods\\Other\\residue.tmp'),
+      /residue could not be removed: D:\\mods\\Other\\residue\.tmp: cleanup denied/
+    );
+
+    fs.promises.writeFile = async () => { const error = new Error('denied after create'); error.code = 'EACCES'; throw error; };
+    fs.promises.lstat = async () => ({ isFile: () => true });
+    await assert.rejects(
+      proveUnrelatedWriteRefused('D:\\mods\\Other\\partial-residue.tmp'),
+      /residue could not be removed: D:\\mods\\Other\\partial-residue\.tmp: cleanup denied/
+    );
+  } finally {
+    fs.promises.writeFile = originalWriteFile;
+    fs.promises.lstat = originalLstat;
+    fs.promises.rm = originalRm;
+  }
 });
 
 test('artifact requests must match the exact allowlist destination', () => {

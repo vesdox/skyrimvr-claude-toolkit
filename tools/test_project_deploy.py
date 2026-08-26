@@ -173,6 +173,55 @@ class ProjectDeployTests(unittest.TestCase):
                 deploy.dry_run(environment, target, artifacts)
             popen.assert_not_called()
 
+    def test_known_hosts_parser_ignores_comments_and_blank_lines_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            known_hosts = Path(directory) / "known-hosts"
+            known_hosts.write_text(
+                "# 100.113.242.33:22 SSH-2.0-OpenSSH_for_Windows_9.5\n\n"
+                "100.113.242.33 ssh-ed25519 AAAAtest\n"
+            )
+            self.assertEqual(
+                deploy.known_hosts_key_entries(known_hosts),
+                [["100.113.242.33", "ssh-ed25519", "AAAAtest"]],
+            )
+            known_hosts.write_text("# comment only\n")
+            self.assertEqual(deploy.known_hosts_key_entries(known_hosts), [])
+
+    def test_smoke_corrections_cover_runtime_audit_and_apply_serialization(self):
+        bridge = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" / "bridge.js"
+        ).read_text()
+        smoke = (
+            deploy.ROOT / "tools" / "smoke_project_deploy_ssh.py"
+        ).read_text()
+        self.assertIn("node_runtime_write_open_refused", bridge)
+        self.assertIn("await acquireApplyLock(lockPath)", bridge)
+        self.assertIn("result.audit = audit(", bridge)
+        self.assertIn("durable audit record could not be read back exactly once", bridge)
+        self.assertIn('require_audit_proof(health, "health")', smoke)
+        self.assertIn('require_audit_proof(smoke, "smoke")', smoke)
+
+    def test_bounded_worker_update_pins_exact_old_and_new_pairs(self):
+        root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
+        worker_hash = deploy.sha256_file(root / "bridge.js")
+        wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
+        wrapper = (root / "invoke-ssh.ps1").read_text()
+        provision = (root / "provision.ps1").read_text()
+        updater = (root / "update-worker.ps1").read_text()
+        self.assertEqual(worker_hash, "63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae")
+        self.assertEqual(wrapper_hash, "da34282e5ce0eaff5f0c51973bc80145a1700ed2c2e8bd5a0d5ee8d7f209f907")
+        for content in (wrapper, provision, updater):
+            self.assertIn(worker_hash, content)
+        for content in (provision, updater):
+            self.assertIn(wrapper_hash, content)
+        self.assertIn("54c66da67ca4d2e1276a3f420ac3f6226e6a4572cca1e56553fe9168bc07d1a8", updater)
+        self.assertIn("8f2485244d2bf3270bb01fe56e9490c1be6d7cdd2e8e1fb2a8931618f08cf30b", updater)
+        self.assertIn("sshd_config_changed = $false", updater)
+        self.assertIn("[IO.FileMode]::CreateNew", updater)
+        self.assertIn("[IO.FileShare]::None", updater)
+        self.assertIn("$RollbackErrors.Add(\"worker rollback:", updater)
+        self.assertIn("$RollbackErrors.Add(\"wrapper rollback:", updater)
+
     def test_ssh_bridge_requires_exact_identity_and_forced_command(self):
         with tempfile.TemporaryDirectory() as directory:
             identity = Path(directory) / "deploy-key"

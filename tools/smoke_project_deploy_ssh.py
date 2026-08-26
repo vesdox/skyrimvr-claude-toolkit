@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -15,6 +16,28 @@ import project_deploy as deploy
 ROOT = Path(__file__).resolve().parent.parent
 TRANSFER_IDENTITY = Path.home() / ".ssh" / "hoarfrost_transfer"
 BUILD_IDENTITY = Path.home() / ".ssh" / "hoarfrost_build"
+EXPECTED_SID = "S-1-5-21-3046562540-2879210194-691397096-1014"
+EXPECTED_IDENTITY = "ELLFONE\\SkyrimDeploy"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def require_audit_proof(response: dict, operation: str) -> None:
+    proof = response.get("audit")
+    expected = {
+        "verified": True,
+        "request_id": response.get("request_id"),
+        "operation": operation,
+        "event": operation,
+        "identity": EXPECTED_IDENTITY,
+        "sid": EXPECTED_SID,
+        "ok": True,
+    }
+    if not isinstance(proof, dict) or any(proof.get(key) != value for key, value in expected.items()):
+        raise deploy.DeployError(f"{operation} response has no correlated audit proof: {proof}")
+    if not isinstance(proof.get("ssh_connection"), str) or not proof["ssh_connection"].strip():
+        raise deploy.DeployError(f"{operation} audit proof has no SSH connection correlation")
+    if not isinstance(proof.get("record_sha256"), str) or not SHA256_RE.fullmatch(proof["record_sha256"]):
+        raise deploy.DeployError(f"{operation} audit proof has no valid record SHA256")
 
 
 def run_refusal(label: str, argv: list[str], input_bytes: bytes = b"", timeout: int = 25) -> None:
@@ -55,6 +78,7 @@ def main() -> int:
         health = session.request(deploy.protocol_request("health", {}), timeout=30)
     if health.get("service") != "project-deploy-ssh-worker":
         raise deploy.DeployError("forced-command health returned an unexpected service")
+    require_audit_proof(health, "health")
     print(json.dumps(health, indent=2))
 
     with deploy.SshBridgeSession(bridge, timeout=180) as session:
@@ -66,14 +90,16 @@ def main() -> int:
         "worker_write_open_refused",
         "wrapper_write_open_refused",
         "authorized_keys_write_open_refused",
+        "node_runtime_write_open_refused",
         "registered_destinations_unchanged",
         "registered_backups_unchanged",
         "smoke_backup_removed",
     )
-    if smoke.get("sid") != "S-1-5-21-3046562540-2879210194-691397096-1014":
+    if smoke.get("sid") != EXPECTED_SID:
         raise deploy.DeployError("smoke ran under an unexpected SID")
     if smoke.get("unrelated_count", 0) < 1 or not all(smoke.get(name) is True for name in required):
         raise deploy.DeployError(f"fixed ACL smoke failed: {smoke}")
+    require_audit_proof(smoke, "smoke")
     print(json.dumps(smoke, indent=2))
 
     def ssh_base(user: str, identity: Path) -> list[str]:

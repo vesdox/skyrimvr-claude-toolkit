@@ -12,6 +12,8 @@ const WRAPPER_PATH =
   'C:\\Program Files\\SkyrimDeployBridge\\invoke-ssh.ps1';
 const AUTHORIZED_KEYS_PATH =
   'C:\\Program Files\\SkyrimDeployBridge\\openssh\\authorized_keys';
+const NODE_RUNTIME_PATH =
+  'C:\\Program Files\\SkyrimDeployBridge\\runtime\\node.exe';
 const EXPECTED_SID = 'S-1-5-21-3046562540-2879210194-691397096-1014';
 const MAX_REQUEST_BYTES = 180 * 1024 * 1024;
 const MAX_CONTENT_BYTES = 128 * 1024 * 1024;
@@ -425,6 +427,16 @@ async function acquireApplyLock(lockPath) {
   return createApplyLock(lockPath, body);
 }
 
+async function releaseApplyLock(lockPath, lock) {
+  const releasePath = `${lockPath}.release-${crypto.randomUUID()}`;
+  try {
+    await fs.promises.rename(lockPath, releasePath);
+  } finally {
+    await lock.close();
+  }
+  await fs.promises.rm(releasePath, { force: true });
+}
+
 async function applyDeployment(input, requestId) {
   const config = loadConfig();
   const lockPath = path.win32.join(config.backup_root, 'project-deploy.apply.lock');
@@ -470,13 +482,7 @@ async function applyDeployment(input, requestId) {
     }
     throw error;
   } finally {
-    const releasePath = `${lockPath}.release-${crypto.randomUUID()}`;
-    try {
-      await fs.promises.rename(lockPath, releasePath);
-    } finally {
-      await lock.close();
-    }
-    await fs.promises.rm(releasePath, { force: true });
+    await releaseApplyLock(lockPath, lock);
   }
 }
 
@@ -541,7 +547,30 @@ function sameSnapshot(before, after) {
   return JSON.stringify(canonicalEntries(before)) === JSON.stringify(canonicalEntries(after));
 }
 
-async function smoke(config) {
+async function proveUnrelatedWriteRefused(filename) {
+  try {
+    await fs.promises.writeFile(filename, 'refuse', { flag: 'wx' });
+  } catch (error) {
+    if (!['EACCES', 'EPERM'].includes(error.code)) throw error;
+    try {
+      await fs.promises.lstat(filename);
+    } catch (statError) {
+      if (statError.code === 'ENOENT') return true;
+      throw statError;
+    }
+  }
+  try {
+    await fs.promises.rm(filename);
+  } catch (cleanupError) {
+    throw new Error(
+      `unrelated mod write unexpectedly succeeded and residue could not be removed: ` +
+      `${filename}: ${cleanupError.message}`
+    );
+  }
+  throw new Error(`unrelated mod write unexpectedly succeeded: ${filename}`);
+}
+
+async function smokeUnlocked(config) {
   const keys = Object.keys(config.targets);
   if (keys.length !== 1) throw new Error('smoke requires one exact protected target');
   const target = config.targets[keys[0]];
@@ -580,14 +609,7 @@ async function smoke(config) {
     if (!entry.isDirectory() || entry.name.toLowerCase() === path.win32.basename(target.root).toLowerCase()) continue;
     unrelatedCount += 1;
     const unrelatedProbe = path.win32.join(modsRoot, entry.name, `.hf-${token}.tmp`);
-    try {
-      await fs.promises.writeFile(unrelatedProbe, 'refuse', { flag: 'wx' });
-      await fs.promises.rm(unrelatedProbe, { force: true });
-      throw new Error(`unrelated mod write unexpectedly succeeded: ${entry.name}`);
-    } catch (error) {
-      if (error.message?.startsWith('unrelated mod write unexpectedly succeeded:')) throw error;
-      if (!['EACCES', 'EPERM'].includes(error.code)) throw error;
-    }
+    await proveUnrelatedWriteRefused(unrelatedProbe);
   }
   if (unrelatedCount < 1) throw new Error('no unrelated mod roots were tested');
   const destinationsAfter = await snapshotRegisteredDestinations(target);
@@ -610,10 +632,39 @@ async function smoke(config) {
     worker_write_open_refused: await expectWriteRefused(WORKER_PATH),
     wrapper_write_open_refused: await expectWriteRefused(WRAPPER_PATH),
     authorized_keys_write_open_refused: await expectWriteRefused(AUTHORIZED_KEYS_PATH),
+    node_runtime_write_open_refused: await expectWriteRefused(NODE_RUNTIME_PATH),
     registered_destinations_unchanged: true,
     registered_backups_unchanged: true,
     smoke_backup_removed: true
   };
+}
+
+async function smoke(config) {
+  const lockPath = path.win32.join(config.backup_root, 'project-deploy.apply.lock');
+  const lock = await acquireApplyLock(lockPath);
+  try {
+    return await smokeUnlocked(config);
+  } finally {
+    await releaseApplyLock(lockPath, lock);
+  }
+}
+
+function appendAndVerifyAudit(auditPath, serialized) {
+  const handle = fs.openSync(auditPath, 'a+');
+  try {
+    fs.writeSync(handle, `${serialized}\r\n`, null, 'utf8');
+    fs.fsyncSync(handle);
+    const size = fs.fstatSync(handle).size;
+    const length = Math.min(size, 1024 * 1024);
+    const tail = Buffer.alloc(length);
+    fs.readSync(handle, tail, 0, length, size - length);
+    const matches = tail.toString('utf8').split(/\r?\n/).filter(line => line === serialized);
+    if (matches.length !== 1) {
+      throw new Error('durable audit record could not be read back exactly once');
+    }
+  } finally {
+    fs.closeSync(handle);
+  }
 }
 
 function audit(config, requestId, operation, result) {
@@ -640,7 +691,20 @@ function audit(config, requestId, operation, result) {
     event: result.event ?? operation,
     rollback: result.rollback ?? null
   };
-  fs.appendFileSync(path.win32.join(auditDir, 'project-deploy.ndjson'), `${JSON.stringify(record)}\r\n`, 'utf8');
+  const serialized = JSON.stringify(record);
+  const auditPath = path.win32.join(auditDir, 'project-deploy.ndjson');
+  appendAndVerifyAudit(auditPath, serialized);
+  return {
+    verified: true,
+    request_id: requestId,
+    operation,
+    event: record.event,
+    identity: record.identity,
+    sid: record.sid,
+    ssh_connection: record.ssh_connection,
+    ok: record.ok,
+    record_sha256: sha256Buffer(Buffer.from(serialized, 'utf8'))
+  };
 }
 
 async function dispatch(input, requestId = crypto.randomUUID()) {
@@ -723,7 +787,7 @@ async function runStdio(inputFd = 0, outputFd = 1) {
     }
     if (request?.operation !== 'apply') {
       try {
-        audit(loadConfig(), requestId, request?.operation || null, result);
+        result.audit = audit(loadConfig(), requestId, request?.operation || null, result);
       } catch (auditError) {
         result = {
           ok: false,
@@ -769,5 +833,7 @@ module.exports = {
   runStdio,
   PROTOCOL_MAGIC,
   readFrame,
-  writeFrame
+  writeFrame,
+  proveUnrelatedWriteRefused,
+  appendAndVerifyAudit
 };

@@ -10,8 +10,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ExpectedSid = 'S-1-5-21-3046562540-2879210194-691397096-1014'
-$ExpectedWorkerHash = '54c66da67ca4d2e1276a3f420ac3f6226e6a4572cca1e56553fe9168bc07d1a8'
-$ExpectedWrapperHash = '8f2485244d2bf3270bb01fe56e9490c1be6d7cdd2e8e1fb2a8931618f08cf30b'
+$ExpectedWorkerHash = '63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae'
+$ExpectedWrapperHash = 'da34282e5ce0eaff5f0c51973bc80145a1700ed2c2e8bd5a0d5ee8d7f209f907'
 $ExpectedConfigHash = '8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a'
 $ExpectedPublicKeyHash = '91bd33e543bf43ef38683a630da7961e2a50a7060dec4e3a55fd79ac7c1bbb53'
 $ExpectedNodeHash = '3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5'

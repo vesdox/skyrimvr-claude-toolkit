@@ -337,6 +337,16 @@ def evidence_destination(environment: dict, target: dict, relative: str) -> Path
     return destination
 
 
+def known_hosts_key_entries(path: Path) -> list[list[str]]:
+    entries: list[list[str]] = []
+    for line in path.read_text(errors="strict").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        entries.append(stripped.split())
+    return entries
+
+
 def ssh_bridge_config(environment: dict) -> dict:
     bridge = environment.get("bridges", {}).get("project_deploy", {})
     if bridge.get("protocol") != "project-deploy-ssh-v1":
@@ -367,10 +377,10 @@ def ssh_bridge_config(environment: dict) -> dict:
         mode = filename.stat().st_mode & 0o777
         if mode & 0o077:
             raise DeployError(f"dedicated SkyrimDeploy SSH {label} permissions are too broad: {oct(mode)}")
-    host_lines = [line for line in known_hosts.read_text(errors="strict").splitlines() if line.strip()]
-    if len(host_lines) != 1:
-        raise DeployError("dedicated project deployment known-hosts file must contain exactly one key")
-    host_fields = host_lines[0].split()
+    host_entries = known_hosts_key_entries(known_hosts)
+    if len(host_entries) != 1:
+        raise DeployError("dedicated project deployment known-hosts file must contain exactly one host-key entry")
+    host_fields = host_entries[0]
     if (
         len(host_fields) < 3
         or host_fields[0] != host

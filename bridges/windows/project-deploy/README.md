@@ -115,10 +115,20 @@ hash, and ACLs before executing it.
 
 A remote smoke with the dedicated key is still required after local provisioning. It
 must prove dedicated-key-only protocol access, shell/SFTP/PTY/forwarding refusal,
-unrelated-mod refusal, protected worker/wrapper/config/key refusal, target probe and
-smoke-backup cleanup, backup/replace/rollback, audit evidence, unchanged existing
-build/transfer authentication behavior, and unchanged registered destination/backup
-snapshots. Smoke must not deploy a registered candidate artifact.
+unrelated-mod refusal, protected Node/worker/wrapper/config/key refusal, target probe
+and smoke-backup cleanup, backup/replace/rollback, read-back-verified and
+request-correlated audit evidence, unchanged existing build/transfer authentication
+behavior, and unchanged registered destination/backup snapshots. Smoke takes the
+existing apply serialization lock around its destination/backup snapshots and probe
+work. Smoke must not deploy a registered candidate artifact.
+
+The post-provisioning smoke correction updates only `bridge.js` and its wrapper hash
+pin. `update-worker.ps1` is the bounded Administrator maintenance path for that exact
+old/new pair: it validates staged and installed hashes, refuses an active deployment
+lock, preserves and verifies both file ACLs, backs up both old files, writes in place,
+validates the installed scripts, and restores the exact old pair on failure. It does
+not rerun provisioning, restart sshd, edit `sshd_config`, alter identities/keys/ACLs,
+or touch any deployment target.
 
 ## Client behavior
 
