@@ -228,19 +228,18 @@ class ProjectDeployTests(unittest.TestCase):
         with self.assertRaises(deploy.DeployError):
             smoke.require_audit_proof(response, "health")
 
-    def test_bounded_worker_update_pins_exact_old_and_new_pairs(self):
+    def test_bounded_worker_update_pins_exact_historical_pairs(self):
         root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
         worker_hash = deploy.sha256_file(root / "bridge.js")
-        wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
-        wrapper = (root / "invoke-ssh.ps1").read_text()
+        current_wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
         provision = (root / "provision.ps1").read_text()
         updater = (root / "update-worker.ps1").read_text()
         self.assertEqual(worker_hash, "63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae")
-        self.assertEqual(wrapper_hash, "da34282e5ce0eaff5f0c51973bc80145a1700ed2c2e8bd5a0d5ee8d7f209f907")
-        for content in (wrapper, provision, updater):
-            self.assertIn(worker_hash, content)
-        for content in (provision, updater):
-            self.assertIn(wrapper_hash, content)
+        self.assertEqual(current_wrapper_hash, "b0d4b3f6b16e7e1a82006b685f0053736e7b77f569b31d8891b9ef602ed329d4")
+        self.assertIn(worker_hash, provision)
+        self.assertIn(worker_hash, updater)
+        self.assertIn(current_wrapper_hash, provision)
+        self.assertIn("da34282e5ce0eaff5f0c51973bc80145a1700ed2c2e8bd5a0d5ee8d7f209f907", updater)
         self.assertIn("54c66da67ca4d2e1276a3f420ac3f6226e6a4572cca1e56553fe9168bc07d1a8", updater)
         self.assertIn("8f2485244d2bf3270bb01fe56e9490c1be6d7cdd2e8e1fb2a8931618f08cf30b", updater)
         self.assertIn("sshd_config_changed = $false", updater)
@@ -248,6 +247,34 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertIn("[IO.FileShare]::None", updater)
         self.assertIn("$RollbackErrors.Add(\"worker rollback:", updater)
         self.assertIn("$RollbackErrors.Add(\"wrapper rollback:", updater)
+
+    def test_bounded_allowlist_update_pins_exact_config_wrapper_pairs(self):
+        root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
+        wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
+        wrapper = (root / "invoke-ssh.ps1").read_text()
+        provision = (root / "provision.ps1").read_text()
+        updater = (root / "update-allowlist.ps1").read_text()
+        old_config = "8103009b73fb481c5a3ae631282bea412ae0aa4b7b95a57ed82a2863c2afac4a"
+        new_config = "c1f14081c70aa8d7292f0a68b141d32fa6bb7b09c589a073ac406f49dedd1a61"
+        old_wrapper = "da34282e5ce0eaff5f0c51973bc80145a1700ed2c2e8bd5a0d5ee8d7f209f907"
+        self.assertEqual(wrapper_hash, "b0d4b3f6b16e7e1a82006b685f0053736e7b77f569b31d8891b9ef602ed329d4")
+        self.assertIn(new_config, wrapper)
+        self.assertIn(new_config, provision)
+        self.assertIn(wrapper_hash, provision)
+        for expected in (old_config, new_config, old_wrapper, wrapper_hash):
+            self.assertIn(expected, updater)
+        self.assertIn("[IO.FileMode]::CreateNew", updater)
+        self.assertIn("[IO.FileShare]::None", updater)
+        self.assertIn("write-time CAS refused", updater)
+        self.assertIn("rollback CAS refused unknown current state", updater)
+        self.assertIn("$Stream.Flush($true)", updater)
+        self.assertIn("transaction-start.json", updater)
+        self.assertIn("config ACL changed during bounded in-place update", updater)
+        self.assertIn("wrapper ACL changed during bounded in-place update", updater)
+        self.assertIn("$RollbackErrors.Add(\"config rollback:", updater)
+        self.assertIn("$RollbackErrors.Add(\"wrapper rollback:", updater)
+        self.assertIn("sshd_config_changed = $false", updater)
+        self.assertIn("deployment_targets_changed = $false", updater)
 
     def test_ssh_bridge_requires_exact_identity_and_forced_command(self):
         with tempfile.TemporaryDirectory() as directory:
