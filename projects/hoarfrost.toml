@@ -19,7 +19,7 @@ role = "vr-validation"
 [build.windows_native]
 command = "./tools/windows-build.sh"
 evidence_root = "/home/wodox/skyrim-dev/artifacts/windows-build"
-expected_source_sha256 = "e97fe73a8fad2e6779543309d1816a034d831016fb58f99c9e5e83d8c27323cd"
+expected_source_sha256 = "df5dc81a13e889b75bf145b9426358142fd23e5ff1e9009c8e7210e11650eb83"
 
 [[deployment.targets]]
 id = "development"
@@ -35,13 +35,13 @@ provenance = "windows-native-build"
 id = "hoarfrost-native-dll"
 source = "Hoarfrost.dll"
 destination = "SKSE/Plugins/Hoarfrost.dll"
-expected_sha256 = "70b500c60ea0904a5456e8a8acdd447dcfc1e3b6754573c6f6a850ed143cc255"
+expected_sha256 = "e9bdb4c9e34c95ec30e13e9fcf25037ef647cdd5c2f6cdd6de9a8c5d2cfb60b0"
 
 [[deployment.sets.files]]
 id = "hoarfrost-native-pdb"
 source = "Hoarfrost.pdb"
 destination = "SKSE/Plugins/Hoarfrost.pdb"
-expected_sha256 = "7f0f97aaabac949b22fd8f82978fa903dd7709a8e6783f0d901de2160549c5fb"
+expected_sha256 = "3bacef002c5310f1a064c6e4b349f68585755d28dfa3fd69d63ad8c41b08f640"
 
 [[deployment.sets]]
 id = "ordinary-finger-manual-tests"
