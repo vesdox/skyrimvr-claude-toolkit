@@ -235,7 +235,7 @@ class ProjectDeployTests(unittest.TestCase):
         provision = (root / "provision.ps1").read_text()
         updater = (root / "update-worker.ps1").read_text()
         self.assertEqual(worker_hash, "63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae")
-        self.assertEqual(current_wrapper_hash, "1e060e0ed4645bf9f14b8234822d967c4f56d45d1a2b6aa13bc7403522a17eb9")
+        self.assertEqual(current_wrapper_hash, "6cbf6d5c7f6569acf9c4307cd2a3efc5b8362589c724ace9e994e203bffe14c7")
         self.assertIn(worker_hash, provision)
         self.assertIn(worker_hash, updater)
         self.assertIn(current_wrapper_hash, provision)
@@ -254,10 +254,10 @@ class ProjectDeployTests(unittest.TestCase):
         wrapper = (root / "invoke-ssh.ps1").read_text()
         provision = (root / "provision.ps1").read_text()
         updater = (root / "update-allowlist.ps1").read_text()
-        old_config = "c1f14081c70aa8d7292f0a68b141d32fa6bb7b09c589a073ac406f49dedd1a61"
-        new_config = "24305a2b886b51e98ced99f8f9e3409a5dcbd781aa34203f489119673fa09033"
-        old_wrapper = "b0d4b3f6b16e7e1a82006b685f0053736e7b77f569b31d8891b9ef602ed329d4"
-        self.assertEqual(wrapper_hash, "1e060e0ed4645bf9f14b8234822d967c4f56d45d1a2b6aa13bc7403522a17eb9")
+        old_config = "24305a2b886b51e98ced99f8f9e3409a5dcbd781aa34203f489119673fa09033"
+        new_config = "865c3733a9cbd9a270485aaa9a61456809bcfd1452342f4fe77534e470ba1393"
+        old_wrapper = "1e060e0ed4645bf9f14b8234822d967c4f56d45d1a2b6aa13bc7403522a17eb9"
+        self.assertEqual(wrapper_hash, "6cbf6d5c7f6569acf9c4307cd2a3efc5b8362589c724ace9e994e203bffe14c7")
         self.assertIn(new_config, wrapper)
         self.assertIn(new_config, provision)
         self.assertIn(wrapper_hash, provision)
