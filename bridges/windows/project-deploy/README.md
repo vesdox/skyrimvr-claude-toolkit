@@ -135,13 +135,15 @@ or touch any deployment target.
 
 A later authorized artifact rotation can require a protected allowlist update without
 a worker change. `update-allowlist.ps1` is the narrower Administrator path for its
-exact pinned old/new `config.json` and `invoke-ssh.ps1` pair. Generate the staged
-config from the committed shared registries, place it beside the paired wrapper and
-updater, then run the updater elevated. It takes the deployment lock, verifies the
-protected worker and Node hashes, compare-and-swap checks installed and staged bytes,
-backs up both replaced files, preserves their ACL SDDL, installs config first for a
-fail-closed transition, and rolls back both files on failure. It does not restart
-sshd, edit `sshd_config`, alter keys/identities/ACLs, or touch a deployment target.
+exact pinned old/new `config.json` and `invoke-ssh.ps1` pair. The tracked `config.json`
+is the current generated ASSOS representation; regenerate it from the committed
+registries and require byte/hash equality before staging the three-file package.
+Run the updater elevated with those files together. It takes the deployment lock,
+verifies the protected worker and Node hashes, compare-and-swap checks installed and
+staged bytes, backs up both replaced files, preserves their ACL SDDL, installs config
+first for a fail-closed transition, and rolls back both files on failure. It does not
+restart sshd, edit `sshd_config`, alter keys/identities/ACLs, or touch a deployment
+target.
 
 ## Completed live SSH smoke
 

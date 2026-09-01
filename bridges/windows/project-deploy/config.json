@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "environment": "assos",
+  "backup_root": "C:\\ProgramData\\SkyrimToolBridge\\project-deploy\\backups",
+  "targets": {
+    "hoarfrost:schema-v4-runtime-proof": {
+      "project": "hoarfrost",
+      "environment": "assos",
+      "target": "schema-v4-runtime-proof",
+      "root": "D:\\Games\\Wabbajack\\Modlists\\ASSOS\\mods\\Hoarfrost - Schema V4 Runtime Proof",
+      "artifacts": {
+        "schema-v4-runtime-proof-dll": {
+          "destination": "SKSE\\Plugins\\Hoarfrost.dll",
+          "sha256": "4206062a04ab6c202e0642965c902c21df8ecb6725ff4e6f5a6b979cba32f8a3"
+        },
+        "schema-v4-runtime-proof-pdb": {
+          "destination": "SKSE\\Plugins\\Hoarfrost.pdb",
+          "sha256": "3f3a6c9fee7920aab0aa49ce5fa3a8576c4648095dc7d19f0719de72a050ab93"
+        },
+        "schema-v4-runtime-proof-mode-inject": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\runtime-proof-mode.txt",
+          "sha256": "aa22a3b5727e1ea2d12abc582bad1731ba07ec93a651fc82137fe891c4002aae"
+        },
+        "schema-v4-runtime-proof-fixture-inject": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\schema-v4-persistence-proof.json",
+          "sha256": "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c"
+        },
+        "schema-v4-runtime-proof-mode-observe": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\runtime-proof-mode.txt",
+          "sha256": "0b57ba47132be97eb8ea5d45dd810f302a993094ce8f1f87ec7c630768879308"
+        },
+        "schema-v4-runtime-proof-fixture-observe": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\schema-v4-persistence-proof.json",
+          "sha256": "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c"
+        }
+      }
+    },
+    "hoarfrost:development": {
+      "project": "hoarfrost",
+      "environment": "assos",
+      "target": "development",
+      "root": "D:\\Games\\Wabbajack\\Modlists\\ASSOS\\mods\\Hoarfrost - Development",
+      "artifacts": {
+        "hoarfrost-native-dll": {
+          "destination": "SKSE\\Plugins\\Hoarfrost.dll",
+          "sha256": "711a9c6ad2c068c411a1ca5cc0584821c6662419f4c71c84c25f2220e6f9395c"
+        },
+        "hoarfrost-native-pdb": {
+          "destination": "SKSE\\Plugins\\Hoarfrost.pdb",
+          "sha256": "cd784c5a4dc2d5490f9f53fd6859d042a7ff563df2d499255bd4de9d501a17e3"
+        },
+        "ordinary-finger-batch-tr0": {
+          "destination": "tr0.txt",
+          "sha256": "898c1df3070ac3cdb5a86b9121d6c7c67a8cedeb2a748485cbe3377b8942449e"
+        },
+        "ordinary-finger-batch-tr1": {
+          "destination": "tr1.txt",
+          "sha256": "0a6975116c9e24fba182147ce71c99f2579ca51b581eb36dec9dfae251fb4bd1"
+        },
+        "ordinary-finger-batch-tr2": {
+          "destination": "tr2.txt",
+          "sha256": "c83b559fcd1692af50c7e8ca76e607f2f7d86f9662f2e5a919bd4c3be38b9735"
+        },
+        "ordinary-finger-batch-tr3": {
+          "destination": "tr3.txt",
+          "sha256": "0bbc37244aef08e352be2b4858a6c334b19c9712fd481610c3fd1662d9fd353b"
+        },
+        "ordinary-finger-batch-tr4": {
+          "destination": "tr4.txt",
+          "sha256": "96a5ee1e3ebc8d0e0a7d9027434516a8b36cb15492bb28abc5130caaafb896b4"
+        },
+        "ordinary-finger-descriptor-wic-cloak-heat": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\EquipmentDescriptors\\90_Hoarfrost_WIC_Cloak_Heat_Proof.ini",
+          "sha256": "d65b56ea1e4be7bbf4098d3a75bb6a0f3f6603e4d5f9b0aef1db11ee1bdb84ac"
+        },
+        "ordinary-finger-descriptor-severe-cold": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\TemperatureDescriptors\\90_Hoarfrost_Severe_Cold_Consequence_Proof.ini",
+          "sha256": "0be84d5001984d7de45f22d1264b857cb1de668d096230fc3e66f95bb7018850"
+        },
+        "ordinary-finger-batch-ti-save": {
+          "destination": "ti-save.txt",
+          "sha256": "a8652edab76273f5f57c5534337ff8a7eebeb19e44b3f4bb8dfa2d2c3327d7e1"
+        },
+        "ordinary-finger-batch-fg0": {
+          "destination": "fg0.txt",
+          "sha256": "42f4b15b7268c0166587d1414c24e8a5e2ba1bef37bd9f9c69e5bf1ae98b817d"
+        },
+        "ordinary-finger-batch-fg-save": {
+          "destination": "fg-save.txt",
+          "sha256": "f42902010471354ed4992e94b8d850db18a268f308fc271c9adc992d6b0c76c2"
+        },
+        "ordinary-finger-batch-fixture-preflight": {
+          "destination": "fg-fixture-preflight.txt",
+          "sha256": "3e25525e52025ae21174de88fea52bf9253d8c396adc0395375c96d666aa29a4"
+        },
+        "ordinary-finger-batch-melee-0": {
+          "destination": "fg-melee-0.txt",
+          "sha256": "14b97589b315b720cf5664a9c423deb2a0c65a38a6bbcf2a494745e34f52d789"
+        },
+        "ordinary-finger-batch-melee-1": {
+          "destination": "fg-melee-1.txt",
+          "sha256": "2028c4a8f74ffaa96df44c68629b0de9630e8ae4abe10211df67d0ff61b57b63"
+        },
+        "ordinary-finger-batch-bow-0": {
+          "destination": "fg-bow-0.txt",
+          "sha256": "14b97589b315b720cf5664a9c423deb2a0c65a38a6bbcf2a494745e34f52d789"
+        },
+        "ordinary-finger-batch-bow-2": {
+          "destination": "fg-bow-2.txt",
+          "sha256": "513cfd754f36a279a8691b0aac12e139aa6a1af6995ef7b02700d5efccee562d"
+        },
+        "ordinary-finger-batch-magic-0": {
+          "destination": "fg-magic-0.txt",
+          "sha256": "14b97589b315b720cf5664a9c423deb2a0c65a38a6bbcf2a494745e34f52d789"
+        },
+        "ordinary-finger-batch-magic-3": {
+          "destination": "fg-magic-3.txt",
+          "sha256": "51dfacc02954e3f797cc3a4e35f32a3f8553be328ad0d380999a3592c27942a7"
+        },
+        "ordinary-finger-batch-fixture-reset": {
+          "destination": "fg-fixture-reset.txt",
+          "sha256": "418c0358c05b58d1eedd4c06042cfbe8fc404f31ed392dc703300e116aa8225a"
+        }
+      }
+    }
+  }
+}
