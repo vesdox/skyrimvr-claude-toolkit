@@ -17,9 +17,17 @@ id = "mo2vr"
 role = "vr-validation"
 
 [build.windows_native]
+default_variant = "ordinary"
 command = "./tools/windows-build.sh"
 evidence_root = "/home/wodox/skyrim-dev/artifacts/windows-build"
 expected_source_sha256 = "15253e81df3a112c99eedb25efddcaa9219a14ca7fb845ad6c422de952a59d5a"
+
+[[build.windows_native.variants]]
+id = "schema-v4-runtime-proof"
+command = "./tools/windows-build.sh"
+arguments = ["schema-v4-runtime-proof"]
+evidence_root = "/home/wodox/skyrim-dev/artifacts/windows-build/schema-v4-runtime-proof"
+required_log_marker = "Hoarfrost runtime-test-seams: on"
 
 [[deployment.targets]]
 id = "development"

@@ -100,7 +100,30 @@ def resolve_project(project_id: str) -> dict:
 
 
 
-def get_native_build(project_id: str):
+def native_build_config(project: dict, variant_id: str | None) -> tuple[str, dict]:
+    build = project.get("build", {}).get("windows_native", {})
+    default_variant = build.get("default_variant", "ordinary")
+    selected = variant_id or default_variant
+    if selected == default_variant:
+        return selected, build
+    variants = build.get("variants", [])
+    matches = [
+        item for item in variants
+        if isinstance(item, dict) and item.get("id") == selected
+    ]
+    if len(matches) != 1:
+        available = [default_variant] + [
+            item.get("id") for item in variants
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ]
+        raise ValueError(
+            f"unregistered Windows native build variant {selected!r}; "
+            f"available: {', '.join(available)}"
+        )
+    return selected, matches[0]
+
+
+def get_native_build(project_id: str, variant_id: str | None = None):
     project = resolve_project(project_id)
 
     if project.get("status") != "active":
@@ -127,7 +150,7 @@ def get_native_build(project_id: str):
             f"project '{project_id}' repository does not exist: {repo}"
         )
 
-    build_config = project.get("build", {}).get("windows_native", {})
+    variant, build_config = native_build_config(project, variant_id)
     command = build_config.get("command")
 
     if not command:
@@ -161,7 +184,15 @@ def get_native_build(project_id: str):
             f"project '{project_id}' build command is not executable: {script}"
         )
 
-    return project, repo, script
+    arguments = build_config.get("arguments", [])
+    if not isinstance(arguments, list) or not all(
+        isinstance(item, str) and item for item in arguments
+    ):
+        raise ValueError(
+            f"project '{project_id}' build variant '{variant}' has invalid fixed arguments"
+        )
+
+    return project, repo, script, variant, arguments
 
 
 
@@ -876,18 +907,23 @@ def cmd_deploy(args):
 
 
 def cmd_build(args):
-    project, repo, script = get_native_build(args.project)
+    project, repo, script, variant, arguments = get_native_build(
+        args.project, args.variant
+    )
 
     print(f"Project:      {project.get('name', args.project)}")
     print(f"Repository:   {repo}")
+    print(f"Build variant:{' ' if variant else ''} {variant}")
     print(f"Native build: {script}")
+    if arguments:
+        print(f"Fixed args:   {' '.join(arguments)}")
 
     if args.dry_run:
         print("Dry run only; build was not started.")
         return
 
     result = subprocess.run(
-        [str(script)],
+        [str(script), *arguments],
         cwd=repo,
     )
 
@@ -1103,6 +1139,11 @@ def main():
 
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("project")
+    build_parser.add_argument(
+        "variant",
+        nargs="?",
+        help="explicit registered native-build variant (defaults to the ordinary build)",
+    )
     build_parser.add_argument(
         "--dry-run",
         action="store_true",

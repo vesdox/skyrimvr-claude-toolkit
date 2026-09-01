@@ -145,10 +145,31 @@ def parse_source_proof(path: Path) -> str:
     return parts[0].lower()
 
 
-def resolve_build_root(project: dict, requested: str | None) -> Path:
+def native_build_config(project: dict, variant_id: str | None) -> tuple[str, dict]:
+    build = project.get("build", {}).get("windows_native", {})
+    default_variant = build.get("default_variant", "ordinary")
+    selected = variant_id or default_variant
+    if selected == default_variant:
+        return selected, build
+    variants = build.get("variants", [])
+    matches = [
+        item for item in variants
+        if isinstance(item, dict) and item.get("id") == selected
+    ]
+    if len(matches) != 1:
+        raise DeployError(f"native deployment requires registered build variant {selected!r}")
+    return selected, matches[0]
+
+
+def resolve_build_root(
+    project: dict,
+    requested: str | None,
+    variant_id: str | None,
+) -> tuple[Path, str]:
     if requested is None:
         raise DeployError("native deployment sets require --build-evidence")
-    configured = project.get("build", {}).get("windows_native", {}).get("evidence_root")
+    variant, build_config = native_build_config(project, variant_id)
+    configured = build_config.get("evidence_root")
     if not isinstance(configured, str) or not configured:
         raise DeployError("project has no registered Windows build evidence root")
     allowed_root = Path(configured).expanduser().resolve()
@@ -165,7 +186,6 @@ def resolve_build_root(project: dict, requested: str | None) -> Path:
         raise DeployError(
             f"build evidence is incomplete at {candidate}; missing: {', '.join(missing)}"
         )
-    build_config = project.get("build", {}).get("windows_native", {})
     expected_source = build_config.get("expected_source_sha256")
     if not isinstance(expected_source, str) or not SHA256_RE.fullmatch(expected_source):
         raise DeployError("project has no pinned Windows-build source archive SHA256")
@@ -178,7 +198,15 @@ def resolve_build_root(project: dict, requested: str | None) -> Path:
     log = (candidate / "build.log").read_text(errors="replace")
     if "100% tests passed, 0 tests failed out of" not in log or "native build pipeline passed" not in log:
         raise DeployError(f"build log does not prove a passing native pipeline: {candidate / 'build.log'}")
-    return candidate
+    variant_marker = build_config.get("required_log_marker")
+    if variant_marker is not None:
+        if not isinstance(variant_marker, str) or not variant_marker:
+            raise DeployError(f"build variant {variant!r} has an invalid required log marker")
+        if variant_marker not in log:
+            raise DeployError(
+                f"build log does not prove variant {variant!r}: missing {variant_marker!r}"
+            )
+    return candidate, variant
 
 
 def resolve_artifacts(
@@ -200,8 +228,8 @@ def resolve_artifacts(
     if len(selected_sets) != len(set(selected_sets)):
         raise DeployError("deployment sets must not be repeated")
 
-    build_root: Path | None = None
-    build_manifest: dict[str, str] | None = None
+    build_roots: dict[str, Path] = {}
+    build_manifests: dict[str, dict[str, str]] = {}
     artifacts: list[dict] = []
     seen_ids: set[str] = set()
     seen_destinations: set[str] = set()
@@ -214,9 +242,25 @@ def resolve_artifacts(
             raise DeployError(f"deployment set {set_id!r} has invalid provenance")
         if not isinstance(files, list) or not files:
             raise DeployError(f"deployment set {set_id!r} has no registered files")
-        if provenance == "windows-native-build" and build_root is None:
-            build_root = resolve_build_root(project, build_evidence)
-            build_manifest = parse_hash_manifest(build_root / "artifacts.sha256")
+        build_root: Path | None = None
+        build_manifest: dict[str, str] | None = None
+        build_variant: str | None = None
+        if provenance == "windows-native-build":
+            requested_variant = config.get("build_variant")
+            variant_key = requested_variant or "ordinary"
+            if variant_key not in build_roots:
+                resolved_root, resolved_variant = resolve_build_root(
+                    project, build_evidence, requested_variant
+                )
+                build_roots[variant_key] = resolved_root
+                build_manifests[variant_key] = parse_hash_manifest(
+                    resolved_root / "artifacts.sha256"
+                )
+                if resolved_variant != variant_key:
+                    raise DeployError("resolved native build variant identity changed unexpectedly")
+            build_root = build_roots[variant_key]
+            build_manifest = build_manifests[variant_key]
+            build_variant = variant_key
 
         for file_config in files:
             if not isinstance(file_config, dict):
@@ -263,18 +307,23 @@ def resolve_artifacts(
                     f"build artifact hash mismatch for {source}: expected {expected_hash}, got {digest}"
                 )
             pinned_hash = file_config.get("expected_sha256")
-            if provenance == "windows-native-build":
+            if provenance == "windows-native-build" and (
+                not isinstance(pinned_hash, str) or not SHA256_RE.fullmatch(pinned_hash)
+            ):
+                raise DeployError(f"native artifact {artifact_id} has no pinned registry SHA256")
+            if pinned_hash is not None:
                 if not isinstance(pinned_hash, str) or not SHA256_RE.fullmatch(pinned_hash):
-                    raise DeployError(f"native artifact {artifact_id} has no pinned registry SHA256")
+                    raise DeployError(f"artifact {artifact_id} has an invalid pinned registry SHA256")
                 if digest != pinned_hash.lower():
                     raise DeployError(
-                        f"build artifact {artifact_id} does not match pinned registry SHA256 "
+                        f"artifact {artifact_id} does not match pinned registry SHA256 "
                         f"{pinned_hash.lower()}: got {digest}"
                     )
             artifacts.append({
                 "id": artifact_id,
                 "set": set_id,
                 "provenance": provenance,
+                "build_variant": build_variant,
                 "source": source,
                 "destination": str(destination_rel),
                 "sha256": digest,
@@ -552,6 +601,8 @@ def request_payload(project_id: str, environment_id: str, target_id: str, artifa
 def print_source(environment: dict, target: dict, item: dict) -> None:
     print(f"Artifact:             {item['id']}")
     print(f"  provenance:         {item['provenance']}")
+    if item.get("build_variant"):
+        print(f"  build variant:      {item['build_variant']}")
     print(f"  source:             {item['source']}")
     print(f"  source SHA256:      {item['sha256']}")
     print(f"  destination:        {windows_destination(environment, target, item['destination'])}")
