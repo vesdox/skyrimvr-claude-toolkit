@@ -365,6 +365,15 @@ def target_config(project: dict, environment_id: str, target_id: str) -> dict:
     return matches[0]
 
 
+def validate_target_sets(target: dict, target_id: str, selected_sets: list[str]) -> None:
+    disallowed_sets = sorted(set(selected_sets) - set(target["sets"]))
+    if disallowed_sets:
+        raise DeployError(
+            f"deployment set(s) not allowed for target {target_id!r}: "
+            + ", ".join(disallowed_sets)
+        )
+
+
 def windows_destination(environment: dict, target: dict, relative: str) -> str:
     mods_root = environment.get("deployment", {}).get("mo2_mods_root_windows")
     if not isinstance(mods_root, str) or not mods_root:
@@ -616,11 +625,13 @@ def dry_run(environment: dict, target: dict, artifacts: list[dict]) -> None:
             existing = sha256_file(observed)
             print(f"  existing path:      {observed} (read-only evidence)")
             print(f"  existing SHA256:    {existing}")
+            print("  backup behavior:    apply backs up the replaced file after bridge re-read")
         elif observed.exists():
             raise DeployError(f"registered destination is not a file: {observed}")
         else:
             print(f"  existing path:      {observed} (absent in read-only evidence)")
             print("  existing SHA256:    absent")
+            print("  backup behavior:    none if still absent; apply re-reads before copying")
         print(f"  resulting SHA256:   {item['sha256']} (planned; no copy performed)")
         print()
     print("Dry run only; no ASSOS file was changed.")
@@ -701,12 +712,7 @@ def apply_deployment(
 def run(args: argparse.Namespace) -> int:
     project, environment = resolve_project_environment(args.project, args.environment)
     target = target_config(project, args.environment, args.target)
-    disallowed_sets = sorted(set(args.sets) - set(target["sets"]))
-    if disallowed_sets:
-        raise DeployError(
-            f"deployment set(s) not allowed for target {args.target!r}: "
-            + ", ".join(disallowed_sets)
-        )
+    validate_target_sets(target, args.target, args.sets)
     artifacts = resolve_artifacts(project, args.sets, args.build_evidence)
     if not artifacts:
         raise DeployError("at least one registered --set is required")

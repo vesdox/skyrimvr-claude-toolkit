@@ -27,13 +27,73 @@ id = "schema-v4-runtime-proof"
 command = "./tools/windows-build.sh"
 arguments = ["schema-v4-runtime-proof"]
 evidence_root = "/home/wodox/skyrim-dev/artifacts/windows-build/schema-v4-runtime-proof"
+expected_source_sha256 = "7741d6f95c50b2782ac627158ec2cd82a6581ad449c48d2bb43324c828dd096f"
 required_log_marker = "Hoarfrost runtime-test-seams: on"
+
+[[deployment.targets]]
+id = "schema-v4-runtime-proof"
+environment = "assos"
+mod = "Hoarfrost - Schema V4 Runtime Proof"
+sets = [
+  "schema-v4-runtime-proof-native",
+  "schema-v4-runtime-proof-inputs-inject",
+  "schema-v4-runtime-proof-inputs-observe",
+]
 
 [[deployment.targets]]
 id = "development"
 environment = "assos"
 mod = "Hoarfrost - Development"
 sets = ["ordinary-finger-native", "ordinary-finger-manual-tests"]
+
+[[deployment.sets]]
+id = "schema-v4-runtime-proof-native"
+provenance = "windows-native-build"
+build_variant = "schema-v4-runtime-proof"
+
+[[deployment.sets.files]]
+id = "schema-v4-runtime-proof-dll"
+source = "Hoarfrost.dll"
+destination = "SKSE/Plugins/Hoarfrost.dll"
+expected_sha256 = "4206062a04ab6c202e0642965c902c21df8ecb6725ff4e6f5a6b979cba32f8a3"
+
+[[deployment.sets.files]]
+id = "schema-v4-runtime-proof-pdb"
+source = "Hoarfrost.pdb"
+destination = "SKSE/Plugins/Hoarfrost.pdb"
+expected_sha256 = "3f3a6c9fee7920aab0aa49ce5fa3a8576c4648095dc7d19f0719de72a050ab93"
+
+[[deployment.sets]]
+id = "schema-v4-runtime-proof-inputs-inject"
+provenance = "repository"
+
+[[deployment.sets.files]]
+id = "schema-v4-runtime-proof-mode-inject"
+source = "tools/manual-testing/schema-v4-runtime-proof/runtime-proof-mode.inject.txt"
+destination = "SKSE/Plugins/Hoarfrost/RuntimeTests/runtime-proof-mode.txt"
+expected_sha256 = "aa22a3b5727e1ea2d12abc582bad1731ba07ec93a651fc82137fe891c4002aae"
+
+[[deployment.sets.files]]
+id = "schema-v4-runtime-proof-fixture-inject"
+source = "tools/manual-testing/schema-v4-runtime-proof/schema-v4-persistence-proof.json"
+destination = "SKSE/Plugins/Hoarfrost/RuntimeTests/schema-v4-persistence-proof.json"
+expected_sha256 = "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c"
+
+[[deployment.sets]]
+id = "schema-v4-runtime-proof-inputs-observe"
+provenance = "repository"
+
+[[deployment.sets.files]]
+id = "schema-v4-runtime-proof-mode-observe"
+source = "tools/manual-testing/schema-v4-runtime-proof/runtime-proof-mode.observe.txt"
+destination = "SKSE/Plugins/Hoarfrost/RuntimeTests/runtime-proof-mode.txt"
+expected_sha256 = "0b57ba47132be97eb8ea5d45dd810f302a993094ce8f1f87ec7c630768879308"
+
+[[deployment.sets.files]]
+id = "schema-v4-runtime-proof-fixture-observe"
+source = "tools/manual-testing/schema-v4-runtime-proof/schema-v4-persistence-proof.json"
+destination = "SKSE/Plugins/Hoarfrost/RuntimeTests/schema-v4-persistence-proof.json"
+expected_sha256 = "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c"
 
 [[deployment.sets]]
 id = "ordinary-finger-native"

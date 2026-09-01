@@ -65,6 +65,39 @@ class ProjectDeployTests(unittest.TestCase):
         with self.assertRaises(deploy.DeployError):
             deploy.target_config(project, "assos", "development")
 
+    def test_hoarfrost_schema_v4_proof_target_is_exactly_confined(self):
+        project = deploy.load_toml(deploy.PROJECTS_DIR / "hoarfrost.toml")
+        environment = deploy.load_toml(deploy.ENVIRONMENTS_DIR / "assos.toml")
+        proof = deploy.target_config(project, "assos", "schema-v4-runtime-proof")
+        self.assertEqual(proof["mod"], "Hoarfrost - Schema V4 Runtime Proof")
+        deploy.validate_target_sets(
+            proof,
+            "schema-v4-runtime-proof",
+            ["schema-v4-runtime-proof-native", "schema-v4-runtime-proof-inputs-inject"],
+        )
+        self.assertEqual(
+            deploy.windows_destination(
+                environment, proof, "SKSE/Plugins/Hoarfrost.dll"
+            ),
+            r"D:\Games\Wabbajack\Modlists\ASSOS\mods\Hoarfrost - Schema V4 Runtime Proof\SKSE\Plugins\Hoarfrost.dll",
+        )
+
+        development = deploy.target_config(project, "assos", "development")
+        with self.assertRaises(deploy.DeployError):
+            deploy.validate_target_sets(
+                development,
+                "development",
+                ["schema-v4-runtime-proof-native"],
+            )
+        for unregistered in (
+            "arbitrary-sibling-mod",
+            "profiles/ASSOS/saves",
+            r"C:\\generic\\path",
+        ):
+            with self.subTest(unregistered=unregistered):
+                with self.assertRaises(deploy.DeployError):
+                    deploy.target_config(project, "assos", unregistered)
+
     def test_artifact_request_refuses_unregistered_set(self):
         with self.assertRaises(deploy.DeployError):
             deploy.resolve_artifacts(
