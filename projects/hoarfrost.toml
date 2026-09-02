@@ -27,7 +27,7 @@ id = "schema-v4-runtime-proof"
 command = "./tools/windows-build.sh"
 arguments = ["schema-v4-runtime-proof"]
 evidence_root = "/home/wodox/skyrim-dev/artifacts/windows-build/schema-v4-runtime-proof"
-expected_source_sha256 = "7741d6f95c50b2782ac627158ec2cd82a6581ad449c48d2bb43324c828dd096f"
+expected_source_sha256 = "17d212b0c4e47f2949d89fefacd3319e5fd4d5a440363a722a0cf28f6132b2ef"
 required_log_marker = "Hoarfrost runtime-test-seams: on"
 
 [[deployment.targets]]
