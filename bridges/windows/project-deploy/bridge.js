@@ -86,25 +86,177 @@ function resolveTarget(config, input) {
   return target;
 }
 
-async function validateDestination(root, relative) {
+function statIdentity(stat, real) {
+  return { real, dev: String(stat.dev), ino: String(stat.ino) };
+}
+
+function sameIdentity(left, right) {
+  return samePath(left.real, right.real) && left.dev === right.dev && left.ino === right.ino;
+}
+
+async function directoryIdentity(directory, rootReal, label) {
+  const stat = await fs.promises.lstat(directory);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`${label} is not a safe directory: ${directory}`);
+  }
+  const real = await fs.promises.realpath(directory);
+  if (!samePath(rootReal, real) && !beneath(rootReal, real)) {
+    throw new Error(`${label} escapes registered target: ${directory}`);
+  }
+  return statIdentity(stat, real);
+}
+
+async function inspectDestination(root, relative) {
   const destination = path.win32.resolve(root, relative);
   if (!beneath(root, destination) || samePath(root, destination)) {
     throw new Error(`destination escapes registered target: ${relative}`);
   }
-  const rootReal = await fs.promises.realpath(root);
-  const parentReal = await fs.promises.realpath(path.win32.dirname(destination));
-  if (!beneath(rootReal, parentReal)) {
-    throw new Error(`destination parent escapes registered target: ${relative}`);
-  }
+  let rootStat;
   try {
-    const stat = await fs.promises.lstat(destination);
+    rootStat = await fs.promises.lstat(root);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error(`registered target root is absent: ${root}`);
+    throw error;
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`registered target root is not a safe directory: ${root}`);
+  }
+  const rootReal = await fs.promises.realpath(root);
+  const rootIdentity = statIdentity(rootStat, rootReal);
+  const parent = path.win32.dirname(destination);
+  const parentRelative = path.win32.relative(path.win32.resolve(root), parent);
+  const components = parentRelative ? parentRelative.split('\\') : [];
+  const existing = [];
+  const missing = [];
+  let candidate = path.win32.resolve(root);
+  let foundMissing = false;
+  for (const component of components) {
+    candidate = path.win32.join(candidate, component);
+    if (foundMissing) {
+      missing.push(candidate);
+      continue;
+    }
+    try {
+      const identity = await directoryIdentity(candidate, rootReal, 'destination ancestor');
+      existing.push({ path: candidate, identity });
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      foundMissing = true;
+      missing.push(candidate);
+    }
+  }
+  return { destination, parent, rootIdentity, existing, missing };
+}
+
+async function validateExistingDestination(layout) {
+  try {
+    const stat = await fs.promises.lstat(layout.destination);
     if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw new Error(`existing destination is not a regular file: ${destination}`);
+      throw new Error(`existing destination is not a regular file: ${layout.destination}`);
     }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  return destination;
+}
+
+async function validateDestination(root, relative) {
+  const layout = await inspectDestination(root, relative);
+  if (layout.missing.length) {
+    const error = new Error(`destination parent is absent: ${layout.parent}`);
+    error.code = 'ENOENT';
+    throw error;
+  }
+  await validateExistingDestination(layout);
+  return layout.destination;
+}
+
+function assertLayoutUnchanged(planned, current) {
+  if (!samePath(planned.destination, current.destination) ||
+      !sameIdentity(planned.rootIdentity, current.rootIdentity) ||
+      planned.existing.length !== current.existing.length ||
+      planned.missing.length !== current.missing.length) {
+    throw new Error(`destination ancestry changed after plan: ${planned.destination}`);
+  }
+  for (let index = 0; index < planned.existing.length; index += 1) {
+    const left = planned.existing[index];
+    const right = current.existing[index];
+    if (!samePath(left.path, right.path) || !sameIdentity(left.identity, right.identity)) {
+      throw new Error(`destination ancestry changed after plan: ${planned.destination}`);
+    }
+  }
+  for (let index = 0; index < planned.missing.length; index += 1) {
+    if (!samePath(planned.missing[index], current.missing[index])) {
+      throw new Error(`destination ancestry changed after plan: ${planned.destination}`);
+    }
+  }
+}
+
+function assertEstablishedLayout(planned, complete, created) {
+  if (!samePath(planned.destination, complete.destination) ||
+      !sameIdentity(planned.rootIdentity, complete.rootIdentity) || complete.missing.length !== 0) {
+    throw new Error(`destination ancestry changed during apply: ${planned.destination}`);
+  }
+  for (const expected of planned.existing) {
+    const actual = complete.existing.find(entry => samePath(entry.path, expected.path));
+    if (!actual || !sameIdentity(expected.identity, actual.identity)) {
+      throw new Error(`destination ancestry changed during apply: ${expected.path}`);
+    }
+  }
+  for (const directory of planned.missing) {
+    const made = created.find(entry => samePath(entry.path, directory));
+    const actual = complete.existing.find(entry => samePath(entry.path, directory));
+    if (!made?.identity || !actual || !sameIdentity(made.identity, actual.identity)) {
+      throw new Error(`created destination ancestry changed during apply: ${directory}`);
+    }
+  }
+}
+
+async function createPlannedDirectories(root, layouts, created = []) {
+  const byPath = new Map();
+  for (const layout of layouts) {
+    for (const directory of layout.missing) byPath.set(directory.toLowerCase(), directory);
+  }
+  const directories = [...byPath.values()].sort((left, right) =>
+    left.split('\\').length - right.split('\\').length || left.localeCompare(right)
+  );
+  const rootReal = layouts[0].rootIdentity.real;
+  for (const directory of directories) {
+    await fs.promises.mkdir(directory);
+    const entry = { path: directory, identity: null };
+    created.push(entry);
+    entry.identity = await directoryIdentity(directory, rootReal, 'created destination ancestor');
+  }
+  return created;
+}
+
+async function removeCreatedDirectories(root, created) {
+  const errors = [];
+  let rootStat;
+  let rootReal;
+  try {
+    rootStat = await fs.promises.lstat(root);
+    rootReal = await fs.promises.realpath(root);
+  } catch (error) {
+    return [`registered target root could not be validated during rollback: ${root}: ${error.message}`];
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    return [`registered target root became unsafe during rollback: ${root}`];
+  }
+  for (const entry of [...created].reverse()) {
+    try {
+      if (!entry.identity) {
+        throw new Error(`created directory identity was not established before rollback: ${entry.path}`);
+      }
+      const current = await directoryIdentity(entry.path, rootReal, 'rollback destination ancestor');
+      if (!sameIdentity(entry.identity, current)) {
+        throw new Error(`created directory identity changed before rollback: ${entry.path}`);
+      }
+      await fs.promises.rmdir(entry.path);
+    } catch (error) {
+      errors.push(String(error?.message ?? error));
+    }
+  }
+  return errors;
 }
 
 function validateArtifactRequest(target, input) {
@@ -167,8 +319,14 @@ async function planDeployment(input) {
   if (total > MAX_CONTENT_BYTES) throw new Error('deployment content exceeds 128 MiB');
 
   for (const item of artifacts) {
-    item.destination = await validateDestination(target.root, item.relative);
-    item.existing_sha256 = await currentHash(item.destination);
+    item.layout = await inspectDestination(target.root, item.relative);
+    item.destination = item.layout.destination;
+    if (item.layout.missing.length) {
+      item.existing_sha256 = null;
+    } else {
+      await validateExistingDestination(item.layout);
+      item.existing_sha256 = await currentHash(item.destination);
+    }
   }
   cleanPlans();
   if (plans.size >= 100) throw new Error('too many active deployment plans');
@@ -184,7 +342,10 @@ async function planDeployment(input) {
       destination: item.destination,
       existing_sha256: item.existing_sha256,
       source_sha256: item.sha256,
-      size: item.size
+      size: item.size,
+      required_missing_parents: [...item.layout.missing],
+      pre_existing_parents: item.layout.existing.map(entry => entry.path),
+      parent_pre_existing: item.layout.missing.length === 0
     }))
   };
 }
@@ -234,14 +395,8 @@ async function applyDeploymentUnlocked(input, requestId) {
   }
 
   for (const item of plan.artifacts) {
-    const destination = await validateDestination(currentTarget.root, item.relative);
-    if (!samePath(destination, item.destination)) {
-      throw new Error(`destination identity changed after plan: ${item.destination}`);
-    }
-    item.destination = destination;
-    if (await currentHash(destination) !== item.existing_sha256) {
-      throw new Error(`destination changed after plan; refusing: ${destination}`);
-    }
+    const currentLayout = await inspectDestination(currentTarget.root, item.relative);
+    assertLayoutUnchanged(item.layout, currentLayout);
   }
 
   audit(currentConfig, requestId, 'apply', {
@@ -255,8 +410,13 @@ async function applyDeploymentUnlocked(input, requestId) {
       source_sha256: item.sha256,
       resulting_sha256: null,
       backup: null,
-      size: item.size
-    }))
+      size: item.size,
+      required_missing_parents: [...item.layout.missing],
+      pre_existing_parents: item.layout.existing.map(entry => entry.path),
+      parent_pre_existing: item.layout.missing.length === 0
+    })),
+    created_directories: [],
+    rolled_back_directories: []
   });
 
   const backupDir = path.win32.join(
@@ -265,7 +425,26 @@ async function applyDeploymentUnlocked(input, requestId) {
     crypto.randomUUID()
   );
   const changed = [];
+  let createdDirectories = [];
+  let rolledBackDirectories = [];
   try {
+    await createPlannedDirectories(
+      currentTarget.root,
+      plan.artifacts.map(item => item.layout),
+      createdDirectories
+    );
+    for (const item of plan.artifacts) {
+      const destination = await validateDestination(currentTarget.root, item.relative);
+      if (!samePath(destination, item.destination)) {
+        throw new Error(`destination identity changed after plan: ${item.destination}`);
+      }
+      const completeLayout = await inspectDestination(currentTarget.root, item.relative);
+      assertEstablishedLayout(item.layout, completeLayout, createdDirectories);
+      item.destination = destination;
+      if (await currentHash(destination) !== item.existing_sha256) {
+        throw new Error(`destination changed after plan; refusing: ${destination}`);
+      }
+    }
     for (const item of plan.artifacts) {
       const entry = {
         item,
@@ -307,8 +486,13 @@ async function applyDeploymentUnlocked(input, requestId) {
         source_sha256: entry.item.sha256,
         resulting_sha256: entry.resulting,
         backup: entry.backup,
-        size: entry.item.size
-      }))
+        size: entry.item.size,
+        required_missing_parents: [...entry.item.layout.missing],
+        pre_existing_parents: entry.item.layout.existing.map(parent => parent.path),
+        parent_pre_existing: entry.item.layout.missing.length === 0
+      })),
+      created_directories: createdDirectories.map(entry => entry.path),
+      rolled_back_directories: []
     };
     // A commit is not accepted unless its durable audit record is written. An audit
     // failure is handled by this transaction's rollback path.
@@ -316,7 +500,8 @@ async function applyDeploymentUnlocked(input, requestId) {
     return result;
   } catch (error) {
     const rollbackErrors = [];
-    const rollbackAttempted = changed.some(entry => entry.replaced === true);
+    const rollbackAttempted = createdDirectories.length > 0 ||
+      changed.some(entry => entry.replaced === true);
     for (const entry of changed.reverse()) {
       try {
         if (entry.temp) await fs.promises.rm(entry.temp, { force: true });
@@ -337,6 +522,12 @@ async function applyDeploymentUnlocked(input, requestId) {
         rollbackErrors.push(String(rollbackError?.message ?? rollbackError));
       }
     }
+    const directoryRollbackErrors = await removeCreatedDirectories(currentTarget.root, createdDirectories);
+    if (directoryRollbackErrors.length === 0) {
+      rolledBackDirectories = [...createdDirectories].reverse().map(entry => entry.path);
+    } else {
+      rollbackErrors.push(...directoryRollbackErrors.map(message => `remove created directory: ${message}`));
+    }
     if (rollbackErrors.length === 0) {
       try {
         await fs.promises.rm(backupDir, { recursive: true, force: true });
@@ -356,8 +547,13 @@ async function applyDeploymentUnlocked(input, requestId) {
       source_sha256: entry.item.sha256,
       resulting_sha256: entry.resulting,
       backup: entry.backupCreated ? entry.backup : null,
-      size: entry.item.size
+      size: entry.item.size,
+      required_missing_parents: [...entry.item.layout.missing],
+      pre_existing_parents: entry.item.layout.existing.map(parent => parent.path),
+      parent_pre_existing: entry.item.layout.missing.length === 0
     }));
+    error.created_directories = createdDirectories.map(entry => entry.path);
+    error.rolled_back_directories = rolledBackDirectories;
     if (rollbackErrors.length) {
       error.message = `${String(error?.message ?? error)}; rollback errors: ${rollbackErrors.join('; ')}`;
     }
@@ -367,7 +563,9 @@ async function applyDeploymentUnlocked(input, requestId) {
       event: 'rollback',
       error: String(error?.message ?? error),
       rollback: error.rollback,
-      artifacts: error.artifacts
+      artifacts: error.artifacts,
+      created_directories: error.created_directories,
+      rolled_back_directories: error.rolled_back_directories
     });
     throw error;
   }
@@ -472,7 +670,9 @@ async function applyDeployment(input, requestId) {
         event: 'failure',
         error: String(error?.message ?? error),
         rollback: error.rollback ?? null,
-        artifacts: error.artifacts ?? null
+        artifacts: error.artifacts ?? null,
+        created_directories: error.created_directories ?? null,
+        rolled_back_directories: error.rolled_back_directories ?? null
       });
     } catch (auditError) {
       throw new Error(
@@ -686,10 +886,15 @@ function audit(config, requestId, operation, result) {
       source_sha256: item.source_sha256 ?? null,
       resulting_sha256: item.resulting_sha256 ?? null,
       backup: item.backup ?? null,
-      size: item.size ?? null
+      size: item.size ?? null,
+      required_missing_parents: item.required_missing_parents ?? [],
+      pre_existing_parents: item.pre_existing_parents ?? [],
+      parent_pre_existing: item.parent_pre_existing ?? null
     })) : null,
     event: result.event ?? operation,
-    rollback: result.rollback ?? null
+    rollback: result.rollback ?? null,
+    created_directories: result.created_directories ?? null,
+    rolled_back_directories: result.rolled_back_directories ?? null
   };
   const serialized = JSON.stringify(record);
   const auditPath = path.win32.join(auditDir, 'project-deploy.ndjson');
@@ -835,5 +1040,12 @@ module.exports = {
   readFrame,
   writeFrame,
   proveUnrelatedWriteRefused,
-  appendAndVerifyAudit
+  appendAndVerifyAudit,
+  inspectDestination,
+  validateDestination,
+  assertLayoutUnchanged,
+  assertEstablishedLayout,
+  createPlannedDirectories,
+  removeCreatedDirectories,
+  sameIdentity
 };

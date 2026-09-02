@@ -98,6 +98,32 @@ class ProjectDeployTests(unittest.TestCase):
                 with self.assertRaises(deploy.DeployError):
                     deploy.target_config(project, "assos", unregistered)
 
+    def test_stage_2a_inject_set_is_exactly_two_registered_runtime_test_files(self):
+        project = deploy.load_toml(deploy.PROJECTS_DIR / "hoarfrost.toml")
+        target = deploy.target_config(project, "assos", "schema-v4-runtime-proof")
+        selected = ["schema-v4-runtime-proof-inputs-inject"]
+        deploy.validate_target_sets(target, "schema-v4-runtime-proof", selected)
+        artifacts = deploy.resolve_artifacts(project, selected, None)
+        self.assertEqual(
+            [(item["id"], item["destination"], item["sha256"]) for item in artifacts],
+            [
+                (
+                    "schema-v4-runtime-proof-mode-inject",
+                    "SKSE/Plugins/Hoarfrost/RuntimeTests/runtime-proof-mode.txt",
+                    "aa22a3b5727e1ea2d12abc582bad1731ba07ec93a651fc82137fe891c4002aae",
+                ),
+                (
+                    "schema-v4-runtime-proof-fixture-inject",
+                    "SKSE/Plugins/Hoarfrost/RuntimeTests/schema-v4-persistence-proof.json",
+                    "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c",
+                ),
+            ],
+        )
+        self.assertEqual(
+            {str(Path(item["destination"]).parent) for item in artifacts},
+            {"SKSE/Plugins/Hoarfrost/RuntimeTests"},
+        )
+
     def test_artifact_request_refuses_unregistered_set(self):
         with self.assertRaises(deploy.DeployError):
             deploy.resolve_artifacts(
@@ -261,20 +287,40 @@ class ProjectDeployTests(unittest.TestCase):
         with self.assertRaises(deploy.DeployError):
             smoke.require_audit_proof(response, "health")
 
-    def test_bounded_worker_update_pins_exact_historical_pairs(self):
+    def test_worker_parent_creation_is_registry_derived_and_transactional(self):
+        bridge = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" / "bridge.js"
+        ).read_text()
+        self.assertIn("for (const layout of layouts)", bridge)
+        self.assertIn("for (const directory of layout.missing)", bridge)
+        self.assertNotIn("input.directories", bridge)
+        self.assertNotIn("recursive: true });\n    const identity = await directoryIdentity", bridge)
+        self.assertIn("await removeCreatedDirectories(currentTarget.root, createdDirectories)", bridge)
+        self.assertIn("await fs.promises.rmdir(entry.path)", bridge)
+        self.assertIn("created_directories", bridge)
+        self.assertIn("rolled_back_directories", bridge)
+        self.assertIn("required_missing_parents", bridge)
+        self.assertIn("pre_existing_parents", bridge)
+
+    def test_bounded_worker_update_pins_exact_current_and_candidate_pairs(self):
         root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
         worker_hash = deploy.sha256_file(root / "bridge.js")
-        provision = (root / "provision.ps1").read_text()
+        wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
         updater = (root / "update-worker.ps1").read_text()
-        historical_wrapper_hash = "c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023"
-        self.assertEqual(worker_hash, "63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae")
-        self.assertIn(worker_hash, provision)
-        self.assertIn(worker_hash, updater)
-        self.assertIn(historical_wrapper_hash, provision)
-        self.assertIn("da34282e5ce0eaff5f0c51973bc80145a1700ed2c2e8bd5a0d5ee8d7f209f907", updater)
-        self.assertIn("54c66da67ca4d2e1276a3f420ac3f6226e6a4572cca1e56553fe9168bc07d1a8", updater)
-        self.assertIn("8f2485244d2bf3270bb01fe56e9490c1be6d7cdd2e8e1fb2a8931618f08cf30b", updater)
+        old_worker = "63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae"
+        old_wrapper = "909b7dc6ab86b2f719cbb9cd626e4089b56ee5f79d36e400a948418a892cb3ab"
+        config_hash = "4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617"
+        self.assertEqual(worker_hash, "11e00d9f224e94a4d290178a97a68862c20f7a15e6c25b7c0363f1b1a0e2e6a3")
+        self.assertEqual(wrapper_hash, "09657a4fe4ba0e63f8ba6453bd1828a73bd73e612b9f5dc2fe430e890893db80")
+        for expected in (old_worker, old_wrapper, worker_hash, wrapper_hash, config_hash):
+            self.assertIn(expected, updater)
+        self.assertIn("write-time CAS refused", updater)
+        self.assertIn("rollback CAS refused unknown current state", updater)
+        self.assertIn("transaction-start.json", updater)
+        self.assertIn("failure.json", updater)
         self.assertIn("sshd_config_changed = $false", updater)
+        self.assertIn("deployment_targets_changed = $false", updater)
+        self.assertIn("mod_content_touched = $false", updater)
         self.assertIn("[IO.FileMode]::CreateNew", updater)
         self.assertIn("[IO.FileShare]::None", updater)
         self.assertIn("$RollbackErrors.Add(\"worker rollback:", updater)
@@ -283,18 +329,17 @@ class ProjectDeployTests(unittest.TestCase):
     def test_bounded_allowlist_update_pins_exact_config_wrapper_pairs(self):
         root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
         config_hash = deploy.sha256_file(root / "config.json")
-        wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
         wrapper = (root / "invoke-ssh.ps1").read_text()
         provision = (root / "provision.ps1").read_text()
         updater = (root / "update-allowlist.ps1").read_text()
         old_config = "3761b240a774a97b732548d535b715b8cf887f17079e1a71398372b2acdb579c"
         old_wrapper = "c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023"
         self.assertEqual(config_hash, "4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617")
-        self.assertEqual(wrapper_hash, "909b7dc6ab86b2f719cbb9cd626e4089b56ee5f79d36e400a948418a892cb3ab")
         self.assertIn(config_hash, wrapper)
         self.assertIn(old_config, provision)
         self.assertIn(old_wrapper, provision)
-        for expected in (old_config, config_hash, old_wrapper, wrapper_hash):
+        historical_allowlist_wrapper = "909b7dc6ab86b2f719cbb9cd626e4089b56ee5f79d36e400a948418a892cb3ab"
+        for expected in (old_config, config_hash, old_wrapper, historical_allowlist_wrapper):
             self.assertIn(expected, updater)
         self.assertIn("[IO.FileMode]::CreateNew", updater)
         self.assertIn("[IO.FileShare]::None", updater)
