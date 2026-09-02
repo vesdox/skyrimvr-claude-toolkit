@@ -7,7 +7,7 @@ $Node = 'C:\Program Files\SkyrimDeployBridge\runtime\node.exe'
 $Worker = 'C:\Program Files\SkyrimDeployBridge\bridge\bridge.js'
 $Config = 'C:\Program Files\SkyrimDeployBridge\config.json'
 $ExpectedWorkerHash = '63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae'
-$ExpectedConfigHash = '3761b240a774a97b732548d535b715b8cf887f17079e1a71398372b2acdb579c'
+$ExpectedConfigHash = '4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617'
 $ExpectedNodeHash = '3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5'
 $ExpectedNodeVersion = 'v24.15.0'
 

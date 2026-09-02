@@ -264,14 +264,13 @@ class ProjectDeployTests(unittest.TestCase):
     def test_bounded_worker_update_pins_exact_historical_pairs(self):
         root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
         worker_hash = deploy.sha256_file(root / "bridge.js")
-        current_wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
         provision = (root / "provision.ps1").read_text()
         updater = (root / "update-worker.ps1").read_text()
+        historical_wrapper_hash = "c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023"
         self.assertEqual(worker_hash, "63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae")
-        self.assertEqual(current_wrapper_hash, "c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023")
         self.assertIn(worker_hash, provision)
         self.assertIn(worker_hash, updater)
-        self.assertIn(current_wrapper_hash, provision)
+        self.assertIn(historical_wrapper_hash, provision)
         self.assertIn("da34282e5ce0eaff5f0c51973bc80145a1700ed2c2e8bd5a0d5ee8d7f209f907", updater)
         self.assertIn("54c66da67ca4d2e1276a3f420ac3f6226e6a4572cca1e56553fe9168bc07d1a8", updater)
         self.assertIn("8f2485244d2bf3270bb01fe56e9490c1be6d7cdd2e8e1fb2a8931618f08cf30b", updater)
@@ -288,15 +287,14 @@ class ProjectDeployTests(unittest.TestCase):
         wrapper = (root / "invoke-ssh.ps1").read_text()
         provision = (root / "provision.ps1").read_text()
         updater = (root / "update-allowlist.ps1").read_text()
-        old_config = "865c3733a9cbd9a270485aaa9a61456809bcfd1452342f4fe77534e470ba1393"
-        new_config = "3761b240a774a97b732548d535b715b8cf887f17079e1a71398372b2acdb579c"
-        old_wrapper = "6cbf6d5c7f6569acf9c4307cd2a3efc5b8362589c724ace9e994e203bffe14c7"
-        self.assertEqual(config_hash, new_config)
-        self.assertEqual(wrapper_hash, "c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023")
-        self.assertIn(new_config, wrapper)
-        self.assertIn(new_config, provision)
-        self.assertIn(wrapper_hash, provision)
-        for expected in (old_config, new_config, old_wrapper, wrapper_hash):
+        old_config = "3761b240a774a97b732548d535b715b8cf887f17079e1a71398372b2acdb579c"
+        old_wrapper = "c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023"
+        self.assertEqual(config_hash, "4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617")
+        self.assertEqual(wrapper_hash, "909b7dc6ab86b2f719cbb9cd626e4089b56ee5f79d36e400a948418a892cb3ab")
+        self.assertIn(config_hash, wrapper)
+        self.assertIn(old_config, provision)
+        self.assertIn(old_wrapper, provision)
+        for expected in (old_config, config_hash, old_wrapper, wrapper_hash):
             self.assertIn(expected, updater)
         self.assertIn("[IO.FileMode]::CreateNew", updater)
         self.assertIn("[IO.FileShare]::None", updater)

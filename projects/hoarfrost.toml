@@ -55,13 +55,13 @@ build_variant = "schema-v4-runtime-proof"
 id = "schema-v4-runtime-proof-dll"
 source = "Hoarfrost.dll"
 destination = "SKSE/Plugins/Hoarfrost.dll"
-expected_sha256 = "4206062a04ab6c202e0642965c902c21df8ecb6725ff4e6f5a6b979cba32f8a3"
+expected_sha256 = "8ed5df6a5ef5f11e8c388deae6606fbf1c7bb0286ab5558daa0805cb63f5ee6b"
 
 [[deployment.sets.files]]
 id = "schema-v4-runtime-proof-pdb"
 source = "Hoarfrost.pdb"
 destination = "SKSE/Plugins/Hoarfrost.pdb"
-expected_sha256 = "3f3a6c9fee7920aab0aa49ce5fa3a8576c4648095dc7d19f0719de72a050ab93"
+expected_sha256 = "a1d85a50330c4677b5bf83eee721a1e5c2162cd04585414b617dc52da6a29731"
 
 [[deployment.sets]]
 id = "schema-v4-runtime-proof-inputs-inject"

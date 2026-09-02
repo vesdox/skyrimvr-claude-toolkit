@@ -11,11 +11,11 @@
       "artifacts": {
         "schema-v4-runtime-proof-dll": {
           "destination": "SKSE\\Plugins\\Hoarfrost.dll",
-          "sha256": "4206062a04ab6c202e0642965c902c21df8ecb6725ff4e6f5a6b979cba32f8a3"
+          "sha256": "8ed5df6a5ef5f11e8c388deae6606fbf1c7bb0286ab5558daa0805cb63f5ee6b"
         },
         "schema-v4-runtime-proof-pdb": {
           "destination": "SKSE\\Plugins\\Hoarfrost.pdb",
-          "sha256": "3f3a6c9fee7920aab0aa49ce5fa3a8576c4648095dc7d19f0719de72a050ab93"
+          "sha256": "a1d85a50330c4677b5bf83eee721a1e5c2162cd04585414b617dc52da6a29731"
         },
         "schema-v4-runtime-proof-mode-inject": {
           "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\runtime-proof-mode.txt",
