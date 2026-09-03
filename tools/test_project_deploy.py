@@ -124,6 +124,47 @@ class ProjectDeployTests(unittest.TestCase):
             {"SKSE/Plugins/Hoarfrost/RuntimeTests"},
         )
 
+    def test_stage_2c_producer_sets_are_closed_single_mode_files(self):
+        project = deploy.load_toml(deploy.PROJECTS_DIR / "hoarfrost.toml")
+        target = deploy.target_config(project, "assos", "schema-v4-runtime-proof")
+        cases = (
+            (
+                "schema-v4-runtime-proof-inputs-produce-newer-native",
+                "schema-v4-runtime-proof-mode-produce-newer-native",
+                "tools/manual-testing/schema-v4-runtime-proof/runtime-proof-mode.produce-newer-native.txt",
+                "a741e4b038e0ab87f9ec756cca797adb05b8dc01db1f635f7d0740dbcf3d3972",
+            ),
+            (
+                "schema-v4-runtime-proof-inputs-produce-newer-schema",
+                "schema-v4-runtime-proof-mode-produce-newer-schema",
+                "tools/manual-testing/schema-v4-runtime-proof/runtime-proof-mode.produce-newer-schema.txt",
+                "3deb0fe64b38caa3cafc62bbe2bd8428d6d45316d49f342acbc3d31dd27a0fd1",
+            ),
+        )
+        for set_id, artifact_id, source, digest in cases:
+            with self.subTest(set_id=set_id):
+                deploy.validate_target_sets(target, "schema-v4-runtime-proof", [set_id])
+                artifacts = deploy.resolve_artifacts(project, [set_id], None)
+                self.assertEqual(len(artifacts), 1)
+                self.assertEqual(
+                    (
+                        artifacts[0]["id"],
+                        artifacts[0]["source"].relative_to(Path(project["repo"])),
+                        artifacts[0]["destination"],
+                        artifacts[0]["sha256"],
+                        artifacts[0]["size"],
+                    ),
+                    (
+                        artifact_id,
+                        Path(source),
+                        "SKSE/Plugins/Hoarfrost/RuntimeTests/runtime-proof-mode.txt",
+                        digest,
+                        25,
+                    ),
+                )
+        with self.assertRaisesRegex(deploy.DeployError, "duplicate selected destination"):
+            deploy.resolve_artifacts(project, [case[0] for case in cases], None)
+
     def test_artifact_request_refuses_unregistered_set(self):
         with self.assertRaises(deploy.DeployError):
             deploy.resolve_artifacts(
