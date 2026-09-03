@@ -11,11 +11,11 @@
       "artifacts": {
         "schema-v4-runtime-proof-dll": {
           "destination": "SKSE\\Plugins\\Hoarfrost.dll",
-          "sha256": "8ed5df6a5ef5f11e8c388deae6606fbf1c7bb0286ab5558daa0805cb63f5ee6b"
+          "sha256": "f29c300395a33749e47393c950cf99fcfb1d5d0f494998abbd65c2160a40e0d6"
         },
         "schema-v4-runtime-proof-pdb": {
           "destination": "SKSE\\Plugins\\Hoarfrost.pdb",
-          "sha256": "a1d85a50330c4677b5bf83eee721a1e5c2162cd04585414b617dc52da6a29731"
+          "sha256": "ac6079ea6d5e5d47de38d0a28f4ab51636a62ec9a77c2afd76152e94ef798f3a"
         },
         "schema-v4-runtime-proof-mode-inject": {
           "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\runtime-proof-mode.txt",
@@ -29,9 +29,13 @@
           "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\runtime-proof-mode.txt",
           "sha256": "0b57ba47132be97eb8ea5d45dd810f302a993094ce8f1f87ec7c630768879308"
         },
-        "schema-v4-runtime-proof-fixture-observe": {
-          "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\schema-v4-persistence-proof.json",
-          "sha256": "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c"
+        "schema-v4-runtime-proof-mode-produce-newer-native": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\runtime-proof-mode.txt",
+          "sha256": "a741e4b038e0ab87f9ec756cca797adb05b8dc01db1f635f7d0740dbcf3d3972"
+        },
+        "schema-v4-runtime-proof-mode-produce-newer-schema": {
+          "destination": "SKSE\\Plugins\\Hoarfrost\\RuntimeTests\\runtime-proof-mode.txt",
+          "sha256": "3deb0fe64b38caa3cafc62bbe2bd8428d6d45316d49f342acbc3d31dd27a0fd1"
         }
       }
     },

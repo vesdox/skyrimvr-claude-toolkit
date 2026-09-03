@@ -1,5 +1,8 @@
+import hashlib
 import json
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -122,6 +125,75 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertEqual(
             {str(Path(item["destination"]).parent) for item in artifacts},
             {"SKSE/Plugins/Hoarfrost/RuntimeTests"},
+        )
+
+    def test_tracked_protected_config_is_canonical_registry_export(self):
+        tracked = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" / "config.json"
+        )
+        exporter = deploy.ROOT / "tools" / "export_deployment_bridge_config.py"
+        with tempfile.TemporaryDirectory() as directory:
+            generated = Path(directory) / "config.json"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(exporter),
+                    "--environment",
+                    "assos",
+                    "--output",
+                    str(generated),
+                ],
+                check=True,
+            )
+            self.assertEqual(generated.read_bytes(), tracked.read_bytes())
+
+    def test_stage_2c_protected_artifact_map_is_exact_and_development_unchanged(self):
+        config_path = (
+            deploy.ROOT / "bridges" / "windows" / "project-deploy" / "config.json"
+        )
+        config = json.loads(config_path.read_text())
+        proof = config["targets"]["hoarfrost:schema-v4-runtime-proof"]
+        self.assertEqual(
+            proof["artifacts"],
+            {
+                "schema-v4-runtime-proof-dll": {
+                    "destination": r"SKSE\Plugins\Hoarfrost.dll",
+                    "sha256": "f29c300395a33749e47393c950cf99fcfb1d5d0f494998abbd65c2160a40e0d6",
+                },
+                "schema-v4-runtime-proof-pdb": {
+                    "destination": r"SKSE\Plugins\Hoarfrost.pdb",
+                    "sha256": "ac6079ea6d5e5d47de38d0a28f4ab51636a62ec9a77c2afd76152e94ef798f3a",
+                },
+                "schema-v4-runtime-proof-mode-inject": {
+                    "destination": r"SKSE\Plugins\Hoarfrost\RuntimeTests\runtime-proof-mode.txt",
+                    "sha256": "aa22a3b5727e1ea2d12abc582bad1731ba07ec93a651fc82137fe891c4002aae",
+                },
+                "schema-v4-runtime-proof-fixture-inject": {
+                    "destination": r"SKSE\Plugins\Hoarfrost\RuntimeTests\schema-v4-persistence-proof.json",
+                    "sha256": "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c",
+                },
+                "schema-v4-runtime-proof-mode-observe": {
+                    "destination": r"SKSE\Plugins\Hoarfrost\RuntimeTests\runtime-proof-mode.txt",
+                    "sha256": "0b57ba47132be97eb8ea5d45dd810f302a993094ce8f1f87ec7c630768879308",
+                },
+                "schema-v4-runtime-proof-mode-produce-newer-native": {
+                    "destination": r"SKSE\Plugins\Hoarfrost\RuntimeTests\runtime-proof-mode.txt",
+                    "sha256": "a741e4b038e0ab87f9ec756cca797adb05b8dc01db1f635f7d0740dbcf3d3972",
+                },
+                "schema-v4-runtime-proof-mode-produce-newer-schema": {
+                    "destination": r"SKSE\Plugins\Hoarfrost\RuntimeTests\runtime-proof-mode.txt",
+                    "sha256": "3deb0fe64b38caa3cafc62bbe2bd8428d6d45316d49f342acbc3d31dd27a0fd1",
+                },
+            },
+        )
+        self.assertNotIn("schema-v4-runtime-proof-fixture-observe", proof["artifacts"])
+        development = config["targets"]["hoarfrost:development"]
+        canonical = json.dumps(
+            development, sort_keys=True, separators=(",", ":")
+        ).encode()
+        self.assertEqual(
+            hashlib.sha256(canonical).hexdigest(),
+            "adefa70cd429bbd5398c665bfea85d87aa9ce7a25141eab812a1b027c242d46c",
         )
 
     def test_stage_2c_producer_sets_are_closed_single_mode_files(self):
@@ -343,17 +415,16 @@ class ProjectDeployTests(unittest.TestCase):
         self.assertIn("required_missing_parents", bridge)
         self.assertIn("pre_existing_parents", bridge)
 
-    def test_bounded_worker_update_pins_exact_current_and_candidate_pairs(self):
+    def test_bounded_worker_update_pins_exact_historical_transition(self):
         root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
         worker_hash = deploy.sha256_file(root / "bridge.js")
-        wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
         updater = (root / "update-worker.ps1").read_text()
         old_worker = "63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae"
         old_wrapper = "909b7dc6ab86b2f719cbb9cd626e4089b56ee5f79d36e400a948418a892cb3ab"
+        installed_wrapper = "09657a4fe4ba0e63f8ba6453bd1828a73bd73e612b9f5dc2fe430e890893db80"
         config_hash = "4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617"
         self.assertEqual(worker_hash, "11e00d9f224e94a4d290178a97a68862c20f7a15e6c25b7c0363f1b1a0e2e6a3")
-        self.assertEqual(wrapper_hash, "09657a4fe4ba0e63f8ba6453bd1828a73bd73e612b9f5dc2fe430e890893db80")
-        for expected in (old_worker, old_wrapper, worker_hash, wrapper_hash, config_hash):
+        for expected in (old_worker, old_wrapper, worker_hash, installed_wrapper, config_hash):
             self.assertIn(expected, updater)
         self.assertIn("write-time CAS refused", updater)
         self.assertIn("rollback CAS refused unknown current state", updater)
@@ -370,18 +441,21 @@ class ProjectDeployTests(unittest.TestCase):
     def test_bounded_allowlist_update_pins_exact_config_wrapper_pairs(self):
         root = deploy.ROOT / "bridges" / "windows" / "project-deploy"
         config_hash = deploy.sha256_file(root / "config.json")
+        wrapper_hash = deploy.sha256_file(root / "invoke-ssh.ps1")
         wrapper = (root / "invoke-ssh.ps1").read_text()
-        provision = (root / "provision.ps1").read_text()
         updater = (root / "update-allowlist.ps1").read_text()
-        old_config = "3761b240a774a97b732548d535b715b8cf887f17079e1a71398372b2acdb579c"
-        old_wrapper = "c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023"
-        self.assertEqual(config_hash, "4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617")
+        old_config = "4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617"
+        old_wrapper = "09657a4fe4ba0e63f8ba6453bd1828a73bd73e612b9f5dc2fe430e890893db80"
+        worker_hash = "11e00d9f224e94a4d290178a97a68862c20f7a15e6c25b7c0363f1b1a0e2e6a3"
+        node_hash = "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5"
+        self.assertEqual(config_hash, "1db4886207222b798b4958813fa6805697091c5a68f3c25bd7d08a27d83613ab")
+        self.assertEqual(wrapper_hash, "27fb89307e26a95ca867b12fe44b928b99b029ee7d69541801ad3f7dbe234539")
         self.assertIn(config_hash, wrapper)
-        self.assertIn(old_config, provision)
-        self.assertIn(old_wrapper, provision)
-        historical_allowlist_wrapper = "909b7dc6ab86b2f719cbb9cd626e4089b56ee5f79d36e400a948418a892cb3ab"
-        for expected in (old_config, config_hash, old_wrapper, historical_allowlist_wrapper):
+        for expected in (old_config, config_hash, old_wrapper, wrapper_hash, worker_hash, node_hash):
             self.assertIn(expected, updater)
+        self.assertIn("stage-2c-registry-rotation-$Stamp", updater)
+        for process_name in ("SkyrimSE", "skse64_loader", "ModOrganizer"):
+            self.assertIn(process_name, updater)
         self.assertIn("[IO.FileMode]::CreateNew", updater)
         self.assertIn("[IO.FileShare]::None", updater)
         self.assertIn("write-time CAS refused", updater)

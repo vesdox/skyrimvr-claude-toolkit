@@ -136,14 +136,20 @@ or touch any deployment target.
 A later authorized artifact rotation can require a protected allowlist update without
 a worker change. `update-allowlist.ps1` is the narrower Administrator path for its
 exact pinned old/new `config.json` and `invoke-ssh.ps1` pair. The tracked `config.json`
-is the current generated ASSOS representation; regenerate it from the committed
-registries and require byte/hash equality before staging the three-file package.
-Run the updater elevated with those files together. It takes the deployment lock,
-verifies the protected worker and Node hashes, compare-and-swap checks installed and
-staged bytes, backs up both replaced files, preserves their ACL SDDL, installs config
-first for a fail-closed transition, and rolls back both files on failure. It does not
-restart sshd, edit `sshd_config`, alter keys/identities/ACLs, or touch a deployment
-target.
+must byte-for-byte equal the canonical ASSOS export from the committed registries;
+the project-deploy Python tests regenerate and compare it so ordinary validation
+cannot silently accept stale tracked bytes. A local project registration alone does
+not authorize the protected bridge until that generated config and its hash-pinned
+wrapper have been activated on Windows.
+
+The Stage 2C Hoarfrost registry rotation updates only those config and wrapper files;
+it does not change the protected worker, Node runtime, forced-command semantics, or
+SSH service. Run the updater elevated with the generated config and paired wrapper.
+It takes the deployment lock, verifies the protected worker and Node hashes,
+compare-and-swap checks installed and staged bytes, backs up both replaced files,
+preserves their ACL SDDL, installs config first for a fail-closed transition, and
+rolls back both files on failure. It does not restart sshd, edit `sshd_config`, alter
+keys/identities/ACLs, or touch a deployment target.
 
 ## Completed live SSH smoke
 

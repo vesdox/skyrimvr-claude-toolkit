@@ -14,11 +14,11 @@ $Node = 'C:\Program Files\SkyrimDeployBridge\runtime\node.exe'
 $BackupRoot = 'C:\ProgramData\SkyrimToolBridge\project-deploy\backups'
 $ApplyLock = Join-Path $BackupRoot 'project-deploy.apply.lock'
 
-$OldConfigHash = '3761b240a774a97b732548d535b715b8cf887f17079e1a71398372b2acdb579c'
-$OldWrapperHash = 'c8b6c56d2ad0bd864e61fb49bf96f17140de600ababd47707d669a513e117023'
-$NewConfigHash = '4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617'
-$NewWrapperHash = '909b7dc6ab86b2f719cbb9cd626e4089b56ee5f79d36e400a948418a892cb3ab'
-$WorkerHash = '63f7e7ee30ef0c07fc7cd495d68ad5ea185d4a0b42a80141140368ca2f8e77ae'
+$OldConfigHash = '4ecdc351f552c5128deb5f5c9e2190f8d6fe7375126e2a1d6c03452f52b63617'
+$OldWrapperHash = '09657a4fe4ba0e63f8ba6453bd1828a73bd73e612b9f5dc2fe430e890893db80'
+$NewConfigHash = '1db4886207222b798b4958813fa6805697091c5a68f3c25bd7d08a27d83613ab'
+$NewWrapperHash = '27fb89307e26a95ca867b12fe44b928b99b029ee7d69541801ad3f7dbe234539'
+$WorkerHash = '11e00d9f224e94a4d290178a97a68862c20f7a15e6c25b7c0363f1b1a0e2e6a3'
 $NodeHash = '3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5'
 
 function Get-Sha256([string]$Path) {
@@ -119,6 +119,12 @@ function Restore-ExactBytes(
     Set-ExactBytesCas $Path $NewHash $OldBytes $OldHash
 }
 
+foreach ($ProcessName in @('SkyrimSE','skse64_loader','ModOrganizer')) {
+    if (Get-Process -Name $ProcessName -ErrorAction SilentlyContinue) {
+        throw "Stage 2C registry rotation is refused while $ProcessName is running"
+    }
+}
+
 foreach ($Path in @($Config,$Wrapper,$ConfigDestination,$WrapperDestination,$WorkerDestination,$Node)) {
     Assert-RegularNonReparseFile $Path
 }
@@ -145,7 +151,7 @@ try {
         $LockBody = [Text.Encoding]::UTF8.GetBytes((@{
             timestamp = (Get-Date).ToUniversalTime().ToString('o')
             pid = $PID
-            operation = 'project-deploy-allowlist-maintenance'
+            operation = 'stage-2c-project-deploy-registry-rotation'
         } | ConvertTo-Json -Compress))
         $LockHandle.Write($LockBody, 0, $LockBody.Length)
         $LockHandle.Flush($true)
@@ -166,10 +172,10 @@ try {
     $ConfigAcl = (Get-Acl -LiteralPath $ConfigDestination).Sddl
     $WrapperAcl = (Get-Acl -LiteralPath $WrapperDestination).Sddl
     $Stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
-    $BackupDirectory = Join-Path $BackupRoot "allowlist-maintenance-$Stamp"
+    $BackupDirectory = Join-Path $BackupRoot "stage-2c-registry-rotation-$Stamp"
     New-Item -ItemType Directory -Path $BackupDirectory -ErrorAction Stop | Out-Null
-    $ConfigBackup = Join-Path $BackupDirectory 'config.json.pre-allowlist-update.bak'
-    $WrapperBackup = Join-Path $BackupDirectory 'invoke-ssh.ps1.pre-allowlist-update.bak'
+    $ConfigBackup = Join-Path $BackupDirectory 'config.json.pre-stage-2c-registry-rotation.bak'
+    $WrapperBackup = Join-Path $BackupDirectory 'invoke-ssh.ps1.pre-stage-2c-registry-rotation.bak'
     Copy-Item -LiteralPath $ConfigDestination -Destination $ConfigBackup -ErrorAction Stop
     Copy-Item -LiteralPath $WrapperDestination -Destination $WrapperBackup -ErrorAction Stop
     Assert-Hash $ConfigBackup $OldConfigHash
@@ -181,7 +187,7 @@ try {
 
     $StartManifest = [ordered]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-        operation = 'project-deploy-allowlist-maintenance-start'
+        operation = 'stage-2c-project-deploy-registry-rotation-start'
         config_before_sha256 = $OldConfigHash
         config_after_sha256 = $NewConfigHash
         wrapper_before_sha256 = $OldWrapperHash
@@ -220,10 +226,12 @@ try {
         }
         [void](Get-Content -LiteralPath $ConfigDestination -Raw -Encoding UTF8 | ConvertFrom-Json)
         [void][ScriptBlock]::Create((Get-Content -LiteralPath $WrapperDestination -Raw -Encoding UTF8))
+        Assert-Hash $WorkerDestination $WorkerHash
+        Assert-Hash $Node $NodeHash
 
         $Evidence = [ordered]@{
             timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
-            operation = 'project-deploy-allowlist-maintenance'
+            operation = 'stage-2c-project-deploy-registry-rotation'
             config_before_sha256 = $OldConfigHash
             config_after_sha256 = $NewConfigHash
             wrapper_before_sha256 = $OldWrapperHash
@@ -236,6 +244,9 @@ try {
             sshd_restarted = $false
             sshd_config_changed = $false
             deployment_targets_changed = $false
+            mod_content_touched = $false
+            saves_touched = $false
+            project_deployment_run = $false
         }
         $EvidencePath = Join-Path $BackupDirectory 'result.json'
         $Evidence | ConvertTo-Json | Set-Content -LiteralPath $EvidencePath -Encoding UTF8
@@ -264,7 +275,7 @@ try {
         throw "bounded allowlist update failed; exact old config/wrapper bytes and ACLs restored: $Failure"
     }
 
-    Write-Host '=== Bounded project-deploy allowlist correction installed ==='
+    Write-Host '=== Bounded Stage 2C project-deploy registry rotation installed ==='
     Write-Host "Config SHA256: $NewConfigHash"
     Write-Host "Wrapper SHA256: $NewWrapperHash"
     Write-Host "Backup/evidence: $BackupDirectory"
