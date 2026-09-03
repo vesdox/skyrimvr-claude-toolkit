@@ -82,18 +82,14 @@ expected_sha256 = "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897
 [[deployment.sets]]
 id = "schema-v4-runtime-proof-inputs-observe"
 provenance = "repository"
+# Mode-only transition: an already-present injection fixture is retained but
+# source-proven inert because observe-only mode never opens or reads it.
 
 [[deployment.sets.files]]
 id = "schema-v4-runtime-proof-mode-observe"
 source = "tools/manual-testing/schema-v4-runtime-proof/runtime-proof-mode.observe.txt"
 destination = "SKSE/Plugins/Hoarfrost/RuntimeTests/runtime-proof-mode.txt"
 expected_sha256 = "0b57ba47132be97eb8ea5d45dd810f302a993094ce8f1f87ec7c630768879308"
-
-[[deployment.sets.files]]
-id = "schema-v4-runtime-proof-fixture-observe"
-source = "tools/manual-testing/schema-v4-runtime-proof/schema-v4-persistence-proof.json"
-destination = "SKSE/Plugins/Hoarfrost/RuntimeTests/schema-v4-persistence-proof.json"
-expected_sha256 = "f0d97705de0969731b2227b0d59c8120364e8b5c521f0125a3dd6a5c3f897e4c"
 
 [[deployment.sets]]
 id = "ordinary-finger-native"
